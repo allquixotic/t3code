@@ -22,6 +22,17 @@ afterEach(async () => {
 it("only offers notice details when the description cannot fit", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let resize = () => {};
+  let mutate = () => {};
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      constructor(callback: () => void) {
+        mutate = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -35,7 +46,9 @@ it("only offers notice details when the description cannot fit", async () => {
   let position = "static";
   vi.stubGlobal("getComputedStyle", () => ({ position }));
   let availableWidth = 200;
+  const nested = { clientWidth: 100, scrollWidth: 80 };
   const text = {
+    querySelectorAll: () => [nested],
     get clientWidth() {
       return (
         availableWidth -
@@ -74,6 +87,12 @@ it("only offers notice details when the description cannot fit", async () => {
   expect(details()).toHaveLength(0);
   text.scrollWidth = 80;
   await act(() => resize());
+  expect(details()).toHaveLength(0);
+  nested.scrollWidth = 500;
+  await act(() => mutate());
+  expect(details()).toHaveLength(1);
+  nested.scrollWidth = 80;
+  await act(() => mutate());
   expect(details()).toHaveLength(0);
   position = "absolute";
   await act(() => resize());

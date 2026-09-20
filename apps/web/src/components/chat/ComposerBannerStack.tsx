@@ -256,15 +256,24 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
       // sustain its own overflow after the description would otherwise fit.
       const recoveredWidth = detailsRef.current ? detailsRef.current.offsetWidth + 4 : 0;
       const hidden = getComputedStyle(description).position === "absolute";
-      setShowDetails(hidden || description.scrollWidth > description.clientWidth + recoveredWidth);
+      setShowDetails(
+        hidden ||
+          [description, ...description.querySelectorAll("*")].some(
+            (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
+          ),
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(description);
-    return () => observer.disconnect();
-    // Content can change without resizing its already-clipped box.
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [children]);
+    // A child can reveal new text without resizing its clipped box.
+    const mutations = new MutationObserver(measure);
+    mutations.observe(description, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+    };
+  }, []);
 
   return (
     <span className={compact ? "contents" : "flex min-w-8 flex-1 items-center gap-1"}>
@@ -285,13 +294,13 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
               <Button
                 ref={detailsRef}
                 size="icon-xs"
-                variant="ghost"
+                variant="ghost-muted"
                 aria-label="Show notice details"
-                className="flex-none text-muted-foreground hover:text-foreground"
+                className="flex-none"
               />
             }
           >
-            <InfoIcon className="size-3.5" />
+            <InfoIcon />
           </PopoverTrigger>
           <PopoverPopup
             aria-label="Notice details"
