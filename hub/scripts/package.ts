@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { resolve, join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { root, hubOnly, command, stableRelease } from "./maintain.ts";
+import { extractTar } from "../src/archive.ts";
 import { parseManifest } from "../src/artifacts.ts";
 import type { Artifact, EnvironmentPolicy } from "../src/types.ts";
 
@@ -130,7 +131,7 @@ try {
     const extracted = join(temporary, target);
     mkdirSync(extracted);
     if (target.startsWith("win-")) build("python3", ["-m", "zipfile", "-e", archive, extracted]);
-    else build("/usr/bin/tar", ["-xf", archive, "-C", extracted]);
+    else await extractTar(archive, extracted, AbortSignal.timeout(120000), true);
     const entries = readdirSync(extracted);
     if (entries.length !== 1) throw new Error("Unexpected upstream archive layout");
     const stage = join(extracted, entries[0]!);

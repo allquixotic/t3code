@@ -1,3 +1,4 @@
+import { extractTar } from "./archive.ts";
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - protected Node I/O adapter, also runs outside the Effect host.
 import net from "node:net";
 import os from "node:os";
@@ -278,19 +279,7 @@ export class RemoteSession {
       upload.fd = -1;
       const directory = join(upload.directory, "runtime");
       mkdirSync(directory, { mode: 0o755 });
-      const tar = process.platform === "win32" ? "C:\\Windows\\System32\\tar.exe" : "/usr/bin/tar";
-      const extracted = await run(
-        tar,
-        [
-          "-xf",
-          upload.file,
-          "-C",
-          directory,
-          ...(process.platform === "win32" ? [] : ["--no-same-owner"]),
-        ],
-        this.abort.signal,
-      );
-      requireThat(extracted.exit_code === 0, "Runtime extraction failed");
+      await extractTar(upload.file, directory, this.abort.signal);
       this.authorized();
       const binary = join(directory, process.platform === "win32" ? "t3.exe" : "t3");
       requireThat(

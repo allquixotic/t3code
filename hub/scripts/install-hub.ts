@@ -19,6 +19,8 @@ import {
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { extractTar } from "../src/archive.ts";
 import { parseConfig } from "../src/config.ts";
 import { parseManifest, verifyArtifact } from "../src/artifacts.ts";
 
@@ -132,13 +134,7 @@ const hostArtifact = manifest.artifacts.find((a) => a.platform === `linux-${proc
 if (!hostArtifact) throw new Error("Hub runtime artifact missing");
 const t3Release = `/opt/t3/releases/hub-${manifest.revision}`;
 mkdirSync(t3Release, { recursive: true });
-execFileSync("/usr/bin/tar", [
-  "-xf",
-  join(published, hostArtifact.file),
-  "-C",
-  t3Release,
-  "--no-same-owner",
-]);
+await extractTar(join(published, hostArtifact.file), t3Release, AbortSignal.timeout(120000));
 rootTree(t3Release);
 const node = process.execPath;
 const wrapper = `#!/bin/sh\nHUB_INVOKED_AS=\$(basename -- \"$0\")\nexport HUB_INVOKED_AS\nexec ${node} --jitless ${release}/src/main.js \"$@\"\n`;
@@ -185,7 +181,37 @@ try {
   execFileSync("systemctl", ["start", "hub-unlocker.service", "hub-broker.service"], {
     stdio: "inherit",
   });
-  // Restart T3 only after broker services have started; the operator's current agent may disconnect.
+  const worker = execFileSync("getent", ["passwd", String(policy.worker_uid)], {
+    encoding: "utf8",
+  }).split(":")[0]!;
+  let ready = false;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const diagnostics = JSON.parse(
+        execFileSync(
+          "runuser",
+          ["-u", worker, "--", node, "--jitless", `${release}/src/main.js`, "doctor"],
+          {
+            encoding: "utf8",
+            timeout: 10000,
+            env: { ...process.env, HUB_BROKER_SOCKET: policy.worker_socket },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        ),
+      );
+      ready =
+        diagnostics.version === "1.0.0-ts" &&
+        diagnostics.checks.broker === "ready" &&
+        diagnostics.checks.unlocker === "ready";
+      if (ready) break;
+    } catch {
+      /* Type=simple is asynchronous; wait for the actual caller-checked endpoints. */
+    }
+    await delay(250);
+  }
+  if (!ready)
+    throw new Error("TypeScript broker/unlocker readiness failed; restoring previous services");
+  // Restart T3 only after both protected services respond; the current agent may disconnect.
   execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
   console.log(
     `Installed ${manifest.baseline} / ${manifest.revision}. Approve a new timed connection for the first live test.`,
@@ -203,5 +229,6 @@ try {
   execFileSync("systemctl", ["start", "hub-unlocker.service", "hub-broker.service"], {
     stdio: "inherit",
   });
+  execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
   throw error;
 }
