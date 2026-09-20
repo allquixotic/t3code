@@ -79,7 +79,7 @@ try {
     sha = createHash("sha256").update(bytes).digest("hex");
   // A fork may already be private. gh is the credential holder; its token never crosses SSH.
   const repositoryCommand =
-    "if gh api repos/allquixotic/t3code --jq .full_name 2>/dev/null; then :; else gh repo fork pingdotgg/t3code --clone=false --remote=false >/dev/null && gh api repos/allquixotic/t3code --jq .full_name; fi";
+    "if gh api repos/allquixotic/t3code --jq .full_name 2>/dev/null; then :; else gh repo fork pingdotgg/t3code --clone=false >/dev/null && gh api repos/allquixotic/t3code --jq .full_name; fi";
   if (!stageOnly && remote(repositoryCommand) !== "allquixotic/t3code")
     throw new Error("GitHub repository mismatch");
   staging = remote("mktemp -d /private/tmp/t3-hub-publish.XXXXXXXX");
