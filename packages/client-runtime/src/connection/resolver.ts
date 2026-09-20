@@ -1,3 +1,4 @@
+import { hubEnvironmentPrefix } from "@t3tools/shared/hubEndpoint";
 import type { AuthClientPresentationMetadata } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Context from "effect/Context";
@@ -50,8 +51,8 @@ function primarySocketUrl(
   clientMetadata: AuthClientPresentationMetadata | undefined,
 ): string {
   const url = new URL(target.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
+  if (url.pathname === "" || url.pathname === "/" || hubEnvironmentPrefix(url)) {
+    url.pathname = hubEnvironmentPrefix(url) + "/ws";
   }
   appendClientConnectionParams(url, clientMetadata, "direct");
   return url.toString();

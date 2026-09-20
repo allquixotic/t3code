@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  environmentEndpointUrl,
   classifyHostedHttpsCompatibility,
   createAdvertisedEndpoint,
   deriveWsBaseUrl,
@@ -58,4 +59,10 @@ describe("advertised endpoint helpers", () => {
       isDefault: true,
     });
   });
+});
+
+it("routes managed API calls within the selected environment", () => {
+  expect(
+    environmentEndpointUrl("https://hub.example/hub/environments/mbp", "/api/environment"),
+  ).toBe("https://hub.example/hub/environments/mbp/api/environment");
 });

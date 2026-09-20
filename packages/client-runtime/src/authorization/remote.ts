@@ -1,3 +1,4 @@
+import { hubEnvironmentPrefix } from "@t3tools/shared/hubEndpoint";
 import {
   AuthAccessTokenType,
   type AuthClientPresentationMetadata,
@@ -236,8 +237,8 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   });
 
   const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
+  if (url.pathname === "" || url.pathname === "/" || hubEnvironmentPrefix(url)) {
+    url.pathname = hubEnvironmentPrefix(url) + "/ws";
   }
   url.searchParams.set("wsTicket", issued.ticket);
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
@@ -262,8 +263,8 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
   const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
+  if (url.pathname === "" || url.pathname === "/" || hubEnvironmentPrefix(url)) {
+    url.pathname = hubEnvironmentPrefix(url) + "/ws";
   }
   url.searchParams.set("wsTicket", issued.ticket);
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);

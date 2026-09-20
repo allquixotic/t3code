@@ -1,3 +1,4 @@
+import { HUB_MANAGED_FORK } from "../../../../hub/src/release.ts";
 import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
@@ -186,8 +187,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   );
   const inFlight = yield* Ref.make(false);
 
-  const capability: ServerSelfUpdateCapability | null =
-    serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
+  const capability: ServerSelfUpdateCapability | null = HUB_MANAGED_FORK
+    ? null
+    : serverConfig.mode === "desktop"
+      ? "desktop-managed"
+      : launcher.managed
+        ? "boot-service"
+        : null;
   const failWith = (reason: string, cause?: unknown) =>
     cause === undefined
       ? new ServerSelfUpdateError({ reason })
@@ -196,6 +202,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
+    if (HUB_MANAGED_FORK)
+      return yield* failWith(
+        "This fork is maintained by the hub. Connect with a fresh timed approval to update a remote runtime.",
+      );
     if (capability === "desktop-managed") {
       // input.targetVersion is meaningless here: the desktop app's own
       // update feed decides what it downloads, and the result carries what

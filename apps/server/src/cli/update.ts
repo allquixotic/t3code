@@ -1,3 +1,4 @@
+import { HUB_MANAGED_FORK } from "../../../../hub/src/release.ts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -259,6 +260,11 @@ export const updateCommand = Command.make("update", {
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      if (HUB_MANAGED_FORK)
+        return yield* new CliUpdateError({
+          reason:
+            "This fork is maintained on t3code with the t3-hub-upgrade skill. Remote runtimes update when approved access connects.",
+        });
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({

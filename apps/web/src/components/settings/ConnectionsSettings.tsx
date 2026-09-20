@@ -67,6 +67,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
+import { HubEnvironments } from "./HubEnvironments";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
@@ -3657,6 +3658,7 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer width="wide">
+      <HubEnvironments />
       {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}

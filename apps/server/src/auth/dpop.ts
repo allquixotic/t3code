@@ -67,7 +67,12 @@ export const verifyRequestDpopProof = (input: {
     const result = verifyDpopProof({
       proof,
       method: input.request.method,
-      url: url.value.href,
+      url:
+        process.env.T3_HUB_MANAGED === "1" && process.env.T3_HUB_PUBLIC_BASE_URL
+          ? process.env.T3_HUB_PUBLIC_BASE_URL.replace(/\/$/, "") +
+            url.value.pathname +
+            url.value.search
+          : url.value.href,
       nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
       ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),

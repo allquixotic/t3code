@@ -1,0 +1,29 @@
+[Unit]
+Description=T3 protected timed remote supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f /run/t3-hub/supervisor.sock
+ExecStart=/var/lib/t3-hub/releases/bootstrap/t3 __hub-agent supervise --config /etc/t3-hub/remote.json
+User=root
+Group=t3-hub-connect
+RuntimeDirectory=t3-hub
+RuntimeDirectoryMode=0750
+UMask=0027
+Restart=always
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=15
+LimitCORE=0
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/t3-hub /run/t3-hub
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+
+[Install]
+WantedBy=multi-user.target

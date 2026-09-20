@@ -330,6 +330,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./hubEndpoint": {
+      "types": "./src/hubEndpoint.ts",
+      "import": "./src/hubEndpoint.ts"
     }
   },
   "scripts": {

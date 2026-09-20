@@ -9,6 +9,7 @@ import {
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
+import { hubEnvironmentPrefix } from "@t3tools/shared/hubEndpoint";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -88,7 +89,7 @@ export const remoteHttpClientLayer = (
 
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   const url = new URL(httpBaseUrl);
-  url.pathname = "/";
+  url.pathname = hubEnvironmentPrefix(url) + "/";
   url.search = "";
   url.hash = "";
   return url.toString();

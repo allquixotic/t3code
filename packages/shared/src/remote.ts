@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { hubEnvironmentPrefix } from "./hubEndpoint.ts";
 
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
@@ -97,7 +98,7 @@ const normalizeRemoteBaseUrl = (
       protocol: url.protocol,
     });
   }
-  url.pathname = "/";
+  url.pathname = hubEnvironmentPrefix(url) + "/";
   url.search = "";
   url.hash = "";
   return url;
@@ -110,7 +111,7 @@ const toHttpBaseUrl = (url: URL): string => {
   } else if (next.protocol === "wss:") {
     next.protocol = "https:";
   }
-  next.pathname = "/";
+  next.pathname = hubEnvironmentPrefix(next) + "/";
   next.search = "";
   next.hash = "";
   return next.toString();
@@ -123,7 +124,7 @@ const toWsBaseUrl = (url: URL): string => {
   } else if (next.protocol === "https:") {
     next.protocol = "wss:";
   }
-  next.pathname = "/";
+  next.pathname = hubEnvironmentPrefix(next) + "/";
   next.search = "";
   next.hash = "";
   return next.toString();

@@ -1,0 +1,12 @@
+{
+  "artifact_directory": "/var/lib/t3-hub-artifacts/current",
+  "lease_signing_key": "/etc/hub-broker/lease-ed25519.pem",
+  "environments": {
+    "mbp": {
+      "host": "mbp",
+      "supervisor": "/usr/local/bin/t3-hub-agent",
+      "platform": "darwin-arm64",
+      "label": "MacBook Pro"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "alias": "mbp",
+  "socket": "/var/run/t3-hub/supervisor.sock",
+  "public_key": "INSERT THE PUBLIC ED25519 LEASE KEY, NEVER THE PRIVATE KEY",
+  "ssh_user": "sean",
+  "runtime_user": "sean",
+  "runtime_home": "/Users/sean",
+  "runtime_uid": 501,
+  "runtime_gid": 20,
+  "root_directory": "/var/lib/t3-hub/releases",
+  "base_directory": "/var/lib/t3-hub/state",
+  "runtime_path": "/Users/sean/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+}

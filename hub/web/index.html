@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LLM Hub · Approve access</title>
+    <link rel="stylesheet" href="/access/static/style.css" />
+    <script src="/access/static/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">LLM HUB / ACCESS</div>
+      <h1>Approve access</h1>
+      <p class="intro">
+        Review what the agent needs, then authorize a limited period with your passkey.
+      </p>
+      <section>
+        <div id="status" role="status" aria-live="polite">Loading request…</div>
+        <dl>
+          <dt>Requested by</dt>
+          <dd id="worker"></dd>
+          <dt>Task</dt>
+          <dd id="purpose"></dd>
+          <dt>Access</dt>
+          <dd><ul id="scope"></ul></dd>
+          <dt>Agent requested</dt>
+          <dd id="requested-duration"></dd>
+        </dl>
+        <label for="duration">Allow access for</label
+        ><select id="duration"></select>
+        <div class="actions">
+          <button id="approve" disabled>Approve with passkey</button
+          ><button id="revoke" class="secondary" hidden>Revoke access</button
+          ><button id="refresh" class="secondary">Refresh status</button>
+        </div>
+        <p id="message" role="alert"></p>
+      </section>
+      <p class="footnote">
+        Approval applies to the listed Hub user. Processes running as that user share the approved
+        access. You can revoke access here or from the requesting agent.
+      </p>
+    </main>
+  </body>
+</html>
