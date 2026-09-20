@@ -47,6 +47,8 @@ async function refresh() {
   duration.replaceChildren();
   const values = [
     ...new Set([
+      60,
+      300,
       900,
       1800,
       3600,

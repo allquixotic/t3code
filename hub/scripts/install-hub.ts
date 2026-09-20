@@ -26,7 +26,10 @@ import { parseManifest, verifyArtifact } from "../src/artifacts.ts";
 
 if (hostname().split(".")[0] !== "t3code" || process.getuid?.() !== 0)
   throw new Error("Administrator installation must run on t3code");
-const [bundleArg, artifactsArg, environmentsArg] = process.argv.slice(2);
+const [bundleArg, artifactsArg, environmentsArg, restartOption] = process.argv.slice(2);
+if (restartOption !== undefined && restartOption !== "--defer-t3-restart")
+  throw new Error("Unexpected installation option");
+const deferRestart = restartOption === "--defer-t3-restart";
 if (!bundleArg || !artifactsArg || !environmentsArg)
   throw new Error(
     "Usage: node install-hub.ts BROKER_BUNDLE ARTIFACT_DIRECTORY ENVIRONMENT_POLICY_JSON",
@@ -50,7 +53,10 @@ const policy = parseConfig({
 });
 if (!policy.unlock_socket) throw new Error("Preserved independent passkey unlocker required");
 for (const environment of Object.values(policy.environments!))
-  if (!manifest.artifacts.some((a) => a.platform === environment.platform))
+  if (
+    environment.enrolled !== false &&
+    !manifest.artifacts.some((a) => a.platform === environment.platform)
+  )
     throw new Error("Artifact coverage is incomplete for enrolled environments");
 for (const artifact of manifest.artifacts) await verifyArtifact(artifacts, artifact, false);
 if (!existsSync(join(bundle, "src/main.js")) || !existsSync(join(bundle, "native/peercred.node")))
@@ -102,6 +108,15 @@ function switchLink(link: string, target: string) {
   symlinkSync(target, next);
   renameSync(next, link);
 }
+for (const directory of [
+  "/usr/local/lib/hub-broker-ts",
+  "/usr/local/lib/hub-broker-ts/releases",
+  "/var/lib/t3-hub-artifacts",
+]) {
+  mkdirSync(directory, { recursive: true, mode: 0o755 });
+  chownSync(directory, 0, 0);
+  chmodSync(directory, 0o755);
+}
 const release = `/usr/local/lib/hub-broker-ts/releases/${manifest.revision}`;
 if (existsSync(release))
   throw new Error("Broker revision already installed; inspect instead of overwriting it");
@@ -121,6 +136,7 @@ if (!existsSync(policy.lease_signing_key!)) {
   try {
     writeFileSync(policy.lease_signing_key!, key, { mode: 0o440, flag: "wx" });
     chownSync(policy.lease_signing_key!, 0, brokerGroup);
+    chmodSync(policy.lease_signing_key!, 0o440);
   } finally {
     key.fill(0);
   }
@@ -158,6 +174,7 @@ try {
   switchLink("/var/lib/t3-hub-artifacts/current", published);
   writeFileSync(policyPath + ".next", JSON.stringify(policy, null, 2) + "\n", { mode: 0o640 });
   chownSync(policyPath + ".next", 0, brokerGroup);
+  chmodSync(policyPath + ".next", 0o640);
   renameSync(policyPath + ".next", policyPath);
   for (const [service, body] of overrides) {
     const directory = `/etc/systemd/system/${service}.service.d`;
@@ -174,6 +191,7 @@ try {
   ].entries()) {
     const next = join(backup, `client-${index}`);
     writeFileSync(next, wrapper, { mode: 0o755, flag: "wx" });
+    chmodSync(next, 0o755);
     renameSync(next, path);
   }
   switchLink("/opt/t3/current", t3Release);
@@ -212,7 +230,11 @@ try {
   if (!ready)
     throw new Error("TypeScript broker/unlocker readiness failed; restoring previous services");
   // Restart T3 only after both protected services respond; the current agent may disconnect.
-  execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
+  if (!deferRestart) execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
+  else
+    console.log(
+      "Broker installed. Run sudo systemctl restart t3code.service in a separate terminal to activate the staged engine.",
+    );
   console.log(
     `Installed ${manifest.baseline} / ${manifest.revision}. Approve a new timed connection for the first live test.`,
   );

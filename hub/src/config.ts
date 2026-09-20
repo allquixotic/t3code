@@ -157,11 +157,23 @@ export function parseConfig(value: unknown): Config {
   }
   const environments: Record<string, EnvironmentPolicy> = {};
   for (const [alias, value] of Object.entries(record(c.environments ?? {}))) {
-    const p = fields(value, ["host", "supervisor", "platform", "label"]);
+    const p = fields(value, ["host", "supervisor", "platform", "label", "enrolled"]);
     requireThat(
       name.test(alias) && hosts[text(p.host)] && text(p.label).length > 0,
       "Invalid environment host",
     );
+    requireThat(
+      p.enrolled === undefined || typeof p.enrolled === "boolean",
+      "Invalid enrollment state",
+    );
+    if (p.enrolled === false) {
+      requireThat(
+        p.platform === undefined && p.supervisor === undefined,
+        "Deferred environment must not specify an unverified platform or supervisor",
+      );
+      environments[alias] = { host: text(p.host), label: text(p.label), enrolled: false };
+      continue;
+    }
     requireThat(
       /^(linux|darwin|win)-(x64|arm64)$/.test(text(p.platform)),
       "Unsupported environment platform",

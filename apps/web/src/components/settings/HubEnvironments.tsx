@@ -130,15 +130,17 @@ export function HubEnvironments() {
             <div className="min-w-0">
               <p className="text-sm font-medium">{environment.label}</p>
               <p className="text-xs text-muted-foreground" aria-live="polite">
-                {environment.phase === "active"
-                  ? `Connected · ${Math.ceil(seconds / 60)} minutes remaining`
-                  : environment.phase === "pending"
-                    ? "Waiting for passkey approval"
-                    : environment.phase === "updating"
-                      ? "Updating remote software…"
-                      : environment.phase === "connecting"
-                        ? "Connecting…"
-                        : (environment.error ?? "Locked")}
+                {environment.phase === "unenrolled"
+                  ? "Setup required"
+                  : environment.phase === "active"
+                    ? `Connected · ${Math.ceil(seconds / 60)} minutes remaining`
+                    : environment.phase === "pending"
+                      ? "Waiting for passkey approval"
+                      : environment.phase === "updating"
+                        ? "Updating remote software…"
+                        : environment.phase === "connecting"
+                          ? "Connecting…"
+                          : (environment.error ?? "Locked")}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -165,7 +167,11 @@ export function HubEnvironments() {
                   Lock
                 </Button>
               ) : (
-                <Button size="sm" onClick={() => void start(environment.alias)}>
+                <Button
+                  size="sm"
+                  disabled={environment.phase === "unenrolled"}
+                  onClick={() => void start(environment.alias)}
+                >
                   Connect
                 </Button>
               )}

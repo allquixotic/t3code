@@ -27,7 +27,11 @@ export class EnvironmentManager {
     this.broker = broker;
     for (const [alias, policy] of Object.entries(broker.config.environments ?? {}))
       this.entries.set(alias, {
-        status: { alias, label: policy.label, phase: "locked" },
+        status: {
+          alias,
+          label: policy.label,
+          phase: policy.enrolled === false ? "unenrolled" : "locked",
+        },
         channels: new Map(),
         nextChannel: 0,
       });
@@ -73,6 +77,10 @@ export class EnvironmentManager {
     return structuredClone(entry.status);
   }
   connect(uid: number, alias: string) {
+    requireThat(
+      this.broker.config.environments![alias]?.enrolled !== false,
+      "Environment setup required",
+    );
     const entry = this.entry(alias);
     if (
       entry.active ||
@@ -105,7 +113,14 @@ export class EnvironmentManager {
     delete entry.protocol;
     for (const channel of entry.channels.values()) channel.destroy();
     entry.channels.clear();
-    entry.status = { alias: entry.status.alias, label: entry.status.label, phase: "locked" };
+    entry.status = {
+      alias: entry.status.alias,
+      label: entry.status.label,
+      phase:
+        this.broker.config.environments![entry.status.alias]!.enrolled === false
+          ? "unenrolled"
+          : "locked",
+    };
   }
   async tick() {
     for (const alias of this.entries.keys()) this.status(alias);
@@ -113,6 +128,7 @@ export class EnvironmentManager {
   private async activate(alias: string, entry: Entry) {
     const policy = this.broker.config.environments![alias]!,
       host = this.broker.config.hosts[policy.host]!;
+    requireThat(policy.enrolled !== false, "Environment setup required");
     const manifest = loadManifest(this.broker.config.artifact_directory!);
     const artifact = manifest.artifacts.find((a) => a.platform === policy.platform);
     requireThat(artifact, "No patched artifact for this platform");

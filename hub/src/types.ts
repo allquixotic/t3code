@@ -42,13 +42,17 @@ export interface Config {
   artifact_directory?: string;
   lease_signing_key?: string;
 }
-export interface EnvironmentPolicy {
-  host: string;
-  /** Administrator-enrolled supervisor. Never inferred from worker input. */
-  supervisor: string;
-  platform: "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win-x64" | "win-arm64";
-  label: string;
-}
+export type RuntimePlatform =
+  | "linux-x64"
+  | "linux-arm64"
+  | "darwin-x64"
+  | "darwin-arm64"
+  | "win-x64"
+  | "win-arm64";
+export type EnvironmentPolicy = { host: string; label: string } & (
+  | { enrolled: false }
+  | { enrolled?: true; supervisor: string; platform: RuntimePlatform }
+);
 export type GrantState =
   | "pending"
   | "authenticating"
@@ -87,7 +91,7 @@ export interface Credentials {
   checkSigner(signal: AbortSignal): Promise<void>;
 }
 export interface Artifact {
-  platform: EnvironmentPolicy["platform"];
+  platform: RuntimePlatform;
   file: string;
   sha256: string;
   bytes: number;
@@ -103,7 +107,7 @@ export interface ReleaseManifest {
 export interface EnvironmentStatus {
   alias: string;
   label: string;
-  phase: "locked" | "pending" | "updating" | "connecting" | "active" | "error";
+  phase: "unenrolled" | "locked" | "pending" | "updating" | "connecting" | "active" | "error";
   approval_url?: string;
   expires_at?: string;
   error?: string;

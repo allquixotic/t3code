@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { root, hubOnly, command, stableRelease } from "./maintain.ts";
 import { extractTar } from "../src/archive.ts";
 import { parseManifest } from "../src/artifacts.ts";
-import type { Artifact, EnvironmentPolicy } from "../src/types.ts";
+import type { Artifact, RuntimePlatform } from "../src/types.ts";
 
 hubOnly();
 if (command("git", ["status", "--porcelain"]))
@@ -45,7 +45,7 @@ const targets = (
   process.argv.slice(2).length
     ? process.argv.slice(2)
     : ["linux-x64", "linux-arm64", "darwin-arm64", "win-x64", "win-arm64"]
-) as EnvironmentPolicy["platform"][];
+) as RuntimePlatform[];
 if (
   new Set(targets).size !== targets.length ||
   targets.some((target) => !/^(linux|darwin|win)-(x64|arm64)$/.test(target))

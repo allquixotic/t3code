@@ -44,12 +44,14 @@ export class Broker {
         methods: p.methods,
         path_pattern: p.path_pattern,
       };
-    for (const [alias, p] of Object.entries(this.config.environments ?? {}))
+    for (const [alias, p] of Object.entries(this.config.environments ?? {})) {
+      if (p.enrolled === false) continue;
       capabilities[`environment:${alias}`] = {
         ...this.config.hosts[p.host],
         label: p.label,
         updates: "Patched runtime installed automatically from this hub",
       };
+    }
     return {
       worker: this.config.worker_label,
       isolation: "unix_uid_shared",
