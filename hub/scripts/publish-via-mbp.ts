@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { hubOnly, root, command } from "./maintain.ts";
+import { repositoryCommand, publicationScript } from "./publication-shell.ts";
 
 hubOnly();
 const grant = process.argv[2];
@@ -78,8 +79,6 @@ try {
   const bytes = readFileSync(bundle),
     sha = createHash("sha256").update(bytes).digest("hex");
   // A fork may already be private. gh is the credential holder; its token never crosses SSH.
-  const repositoryCommand =
-    "if gh api repos/allquixotic/t3code --jq .full_name 2>/dev/null; then :; else gh repo fork pingdotgg/t3code --clone=false >/dev/null && gh api repos/allquixotic/t3code --jq .full_name; fi";
   if (!stageOnly && remote(repositoryCommand) !== "allquixotic/t3code")
     throw new Error("GitHub repository mismatch");
   staging = remote("mktemp -d /private/tmp/t3-hub-publish.XXXXXXXX");
@@ -98,7 +97,7 @@ try {
     300,
   );
   if (stageOnly) {
-    const script = `#!/bin/sh\nset -eu\nPATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\nexport PATH\ntest "$(id -un)" = sean\ntest "$(gh api user --jq .login)" = allquixotic\ncd ${quote(staging)}\ntest "$(git -C repository.git rev-parse refs/heads/hub-passkey)" = ${quote(revision)}\ntest "$( ${repositoryCommand} )" = allquixotic/t3code\ngit -C repository.git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push https://github.com/allquixotic/t3code.git refs/heads/hub-passkey:refs/heads/hub-passkey\ntest "$(gh api repos/allquixotic/t3code/git/ref/heads/hub-passkey --jq .object.sha)" = ${quote(revision)}\nprintf '%s\\n' ${quote(`Published and verified ${revision}`)}\ncd /\nrm -rf ${quote(staging)}\n`;
+    const script = publicationScript(staging, revision);
     remote(
       `printf %s ${quote(Buffer.from(script).toString("base64"))} | base64 -D > ${quote(staging + "/publish.sh")} && chmod 700 ${quote(staging + "/publish.sh")}`,
     );
