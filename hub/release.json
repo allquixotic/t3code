@@ -4,7 +4,7 @@
   "baseline": "v0.0.42",
   "fork": "https://github.com/allquixotic/t3code.git",
   "branch": "hub-passkey",
-  "patchVersion": "1.0.1",
+  "patchVersion": "1.0.2",
   "protocol": 1,
   "buildHost": "t3code"
 }

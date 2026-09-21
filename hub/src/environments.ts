@@ -76,7 +76,7 @@ export class EnvironmentManager {
     }
     return structuredClone(entry.status);
   }
-  connect(uid: number, alias: string) {
+  connect(uid: number, alias: string, requestedSeconds = 1800) {
     requireThat(
       this.broker.config.environments![alias]?.enrolled !== false,
       "Environment setup required",
@@ -92,7 +92,7 @@ export class EnvironmentManager {
       uid,
       `Connect to ${entry.status.label}; install the hub's patched runtime if needed`,
       [`environment:${alias}`],
-      1800,
+      requestedSeconds,
     );
     entry.grant = grant.id;
     entry.status = {

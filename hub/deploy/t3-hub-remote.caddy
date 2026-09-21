@@ -1,0 +1,17 @@
+# Native remote credentials belong to the remote, while Authelia still gates the public route.
+handle /hub/environments/* {
+ forward_auth 127.0.0.1:9091 {
+  uri /api/authz/forward-auth
+  header_up -Authorization
+  header_up X-Forwarded-Proto https
+  header_up X-Forwarded-Host t3code.tail5e018.ts.net
+  copy_headers Remote-User
+ }
+ reverse_proxy 127.0.0.1:3773 {
+  header_up -Cookie
+  header_up -Remote-User
+  header_up X-Forwarded-Proto https
+  header_down -Set-Cookie
+  stream_close_delay 5m
+ }
+}

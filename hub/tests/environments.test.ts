@@ -4,6 +4,16 @@ import { fixture } from "./fixture.ts";
 import { parseConfig } from "../src/config.ts";
 import { EnvironmentManager } from "../src/environments.ts";
 
+test("diagnostics can request a short approval without changing an existing request", () => {
+  const f = fixture();
+  const manager = new EnvironmentManager(f.broker);
+  const status = manager.connect(1000, "remote", 60);
+  assert.equal(f.broker.list(1000).requests[0]!.requested_seconds, 60);
+  assert.deepEqual(manager.connect(1000, "remote", 300), status);
+  assert.equal(f.broker.list(1000).requests[0]!.requested_seconds, 60);
+  manager.close();
+});
+
 test("deferred environments remain visible but cannot request authorization or activate", () => {
   const f = fixture();
   f.config.environments = { remote: { host: "remote", label: "Later", enrolled: false } };

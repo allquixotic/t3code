@@ -307,7 +307,20 @@ export function workerHandler(broker: Broker, bao: Bao, environments?: Environme
           return;
         }
         if (request.method === "POST" && envPath[2] === "connect") {
-          json(response, 200, environments.connect(uid, envPath[1]!));
+          const options = request.headers["content-type"]?.startsWith("application/json")
+            ? fields(await jsonBody(request), ["requested_seconds"])
+            : {};
+          json(
+            response,
+            200,
+            environments.connect(
+              uid,
+              envPath[1]!,
+              options.requested_seconds === undefined
+                ? undefined
+                : integer(options.requested_seconds),
+            ),
+          );
           return;
         }
         if (request.method === "POST" && envPath[2] === "disconnect") {

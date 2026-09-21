@@ -12,13 +12,16 @@ const [action, alias, mode = "revoke"] = process.argv.slice(2);
 if (!alias || !/^[A-Za-z0-9_.-]+$/.test(alias))
   throw new Error("Supply one enrolled environment alias");
 const socketPath = "/run/hub-broker/worker.sock";
-const api = (method: string, suffix: string) =>
-  call(method, `http://hub/v1/environments/${alias}${suffix}`, undefined, {
+const api = (method: string, suffix: string, body?: unknown) =>
+  call(method, `http://hub/v1/environments/${alias}${suffix}`, body, {
     socketPath,
     signal: AbortSignal.timeout(15000),
   }) as Promise<EnvironmentStatus>;
 if (action === "request") {
-  const status = await api("POST", "/connect");
+  const seconds = process.argv[4] === undefined ? 300 : Number(process.argv[4]);
+  if (![60, 300].includes(seconds))
+    throw new Error("Diagnostic request duration must be 60 or 300 seconds");
+  const status = await api("POST", "/connect", { requested_seconds: seconds });
   console.log(
     JSON.stringify({ alias: status.alias, phase: status.phase, approval_url: status.approval_url }),
   );
@@ -187,6 +190,8 @@ if (action === "request") {
         throw new Error("Existing websocket survived the grant deadline");
       }),
     ]);
+    if (mode === "expiry" && Date.now() < Date.parse(status.expires_at) - 2000)
+      throw new Error("Connection ended before the approved deadline; not an expiry proof");
     const locked = await fetch(base + "/", { signal: AbortSignal.timeout(10000) });
     const final = await api("GET", "");
     if (locked.status !== 423 || final.phase !== "locked")
@@ -195,12 +200,14 @@ if (action === "request") {
       `PASS: native terminal ran on ${alias}; ${mode} closed its existing websocket and rejected new access (HTTP 423).`,
     );
   } finally {
-    await api("POST", "/disconnect").catch(() => {});
+    // Do not deliberately close a newer connection if this test was interrupted.
+    const current = await api("GET", "").catch(() => undefined);
+    if (current?.expires_at === status.expires_at) await api("POST", "/disconnect").catch(() => {});
     ws?.close();
     gateway.closeAllConnections();
     await new Promise<void>((resolve) => gateway.close(() => resolve()));
   }
 } else
   throw new Error(
-    "Usage: node hub/scripts/verify-live.ts request ALIAS | exercise ALIAS revoke|expiry",
+    "Usage: node hub/scripts/verify-live.ts request ALIAS [60|300] | exercise ALIAS revoke|expiry",
   );
