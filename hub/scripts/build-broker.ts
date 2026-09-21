@@ -43,5 +43,10 @@ for (const path of ["web", "native"]) {
   mkdirSync(resolve(root, "hub/dist", path), { recursive: true });
   cpSync(resolve(root, "hub", path), resolve(root, "hub/dist", path), { recursive: true });
 }
+mkdirSync(resolve(root, "hub/dist/deploy"), { recursive: true });
+cpSync(resolve(root, "hub/deploy"), resolve(root, "hub/dist/deploy"), { recursive: true });
+for (const name of ["enroll-linux.sh", "enroll-macos.sh"]) {
+  cpSync(resolve(root, "hub/scripts", name), resolve(root, "hub/dist/deploy", name));
+}
 writeFileSync(resolve(root, "hub/dist/package.json"), '{"type":"module"}\n');
 console.log(`Staged TypeScript broker: ${resolve(root, "hub/dist")}`);

@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  hubAliasForEnvironment,
+  hubEnvironmentStatusText,
+  useHubEnvironments,
+} from "~/hubEnvironments";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -647,6 +653,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
+  const { environments: hubDestinations } = useHubEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -865,21 +872,26 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const addProjectEnvironmentOptions = useMemo(() => {
-    const options = environments.map((environment): AddProjectEnvironmentOption => {
-      const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-      return {
-        environmentId: environment.environmentId,
-        label: resolveEnvironmentOptionLabel({
-          isPrimary,
+    const options = environments
+      .filter(
+        (environment) =>
+          !hubDestinations.some((row) => row.alias === hubAliasForEnvironment(environment)),
+      )
+      .map((environment): AddProjectEnvironmentOption => {
+        const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
+        return {
           environmentId: environment.environmentId,
-          runtimeLabel: environment.label,
-        }),
-        isPrimary,
-        machine: resolveEnvironmentMachineKind(environment.serverConfig),
-        isConnected: canCreateProjectInEnvironment(environment.connection.phase),
-        status: connectionStatusText(environment.connection),
-      };
-    });
+          label: resolveEnvironmentOptionLabel({
+            isPrimary,
+            environmentId: environment.environmentId,
+            runtimeLabel: environment.label,
+          }),
+          isPrimary,
+          machine: resolveEnvironmentMachineKind(environment.serverConfig),
+          isConnected: canCreateProjectInEnvironment(environment.connection.phase),
+          status: connectionStatusText(environment.connection),
+        };
+      });
 
     options.sort((left, right) => {
       if (left.isPrimary !== right.isPrimary) {
@@ -889,7 +901,7 @@ function OpenCommandPaletteDialog(props: {
     });
 
     return options;
-  }, [environments]);
+  }, [environments, hubDestinations]);
   const defaultAddProjectEnvironmentId =
     addProjectEnvironmentOptions.find((option) => option.isConnected)?.environmentId ?? null;
   const wslAddProjectEnvironmentOption = useMemo(
@@ -1529,8 +1541,8 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
-  const addProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
-    (option) => ({
+  const nativeAddProjectEnvironmentItems: CommandPaletteActionItem[] =
+    addProjectEnvironmentOptions.map((option) => ({
       kind: "action",
       value: `action:add-project:environment:${option.environmentId}`,
       searchTerms: [option.label, option.environmentId, option.isPrimary ? "this device" : ""],
@@ -1546,8 +1558,33 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         startAddProjectSourceSelection(option.environmentId);
       },
-    }),
-  );
+    }));
+
+  const addProjectEnvironmentItems: CommandPaletteActionItem[] = [
+    ...nativeAddProjectEnvironmentItems,
+    ...hubDestinations.map((destination): CommandPaletteActionItem => ({
+      kind: "action",
+      value: `action:add-project:hub:${destination.alias}`,
+      searchTerms: [destination.label, destination.alias],
+      title: destination.label,
+      description: hubEnvironmentStatusText(destination),
+      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        const connected = environments.find(
+          (row) =>
+            hubAliasForEnvironment(row) === destination.alias &&
+            row.connection.phase === "connected",
+        );
+        if (destination.phase === "active" && connected) {
+          startAddProjectSourceSelection(connected.environmentId);
+          return;
+        }
+        setOpen(false);
+        await navigate({ to: "/hub/new/$alias", params: { alias: destination.alias } });
+      },
+    })),
+  ];
 
   const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
     () => [
@@ -1563,13 +1600,13 @@ function OpenCommandPaletteDialog(props: {
   const openAddProjectFlow = useCallback(() => {
     // With no environment at all there is nothing to browse, so the only
     // useful next step is connecting one.
-    if (addProjectEnvironmentOptions.length === 0) {
+    if (addProjectEnvironmentItems.length === 0) {
       setOpen(false);
       void navigate({ to: "/settings/connections" });
       return;
     }
 
-    if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) {
+    if (addProjectEnvironmentItems.length > 1 || defaultAddProjectEnvironmentId === null) {
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: addProjectEnvironmentGroups,
@@ -1580,7 +1617,7 @@ function OpenCommandPaletteDialog(props: {
     void startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
   }, [
     addProjectEnvironmentGroups,
-    addProjectEnvironmentOptions.length,
+    addProjectEnvironmentItems.length,
     defaultAddProjectEnvironmentId,
     navigate,
     pushPaletteView,

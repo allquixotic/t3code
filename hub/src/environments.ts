@@ -11,6 +11,7 @@ import { checkHostTrust, sshArgs, shellQuote } from "./ssh.ts";
 import { record, text, integer, requireThat, message, HubError } from "./io.ts";
 import type { EnvironmentStatus } from "./types.ts";
 import { signLease } from "./lease.ts";
+import { provisionEnvironment } from "./provision.ts";
 
 interface Entry {
   status: EnvironmentStatus;
@@ -58,7 +59,8 @@ export class EnvironmentManager {
         let failure: string | undefined;
         const operation = this.activate(alias, entry)
           .catch((error) => {
-            failure = message(error);
+            if (this.broker.status(this.broker.config.worker_uid, grantId).state === "active")
+              failure = message(error);
           })
           .finally(() => {
             if (entry.grant === grantId) {
@@ -74,17 +76,18 @@ export class EnvironmentManager {
         entry.active = operation;
       }
     }
-    return structuredClone(entry.status);
+    return {
+      ...structuredClone(entry.status),
+      http_base_url: `${this.broker.config.origin}/hub/environments/${alias}`,
+    };
   }
   connect(uid: number, alias: string, requestedSeconds = 1800) {
-    requireThat(
-      this.broker.config.environments![alias]?.enrolled !== false,
-      "Environment setup required",
-    );
     const entry = this.entry(alias);
     if (
       entry.active ||
-      ["pending", "connecting", "updating", "active"].includes(entry.status.phase)
+      ["pending", "checking", "installing", "connecting", "updating", "active"].includes(
+        entry.status.phase,
+      )
     )
       return this.status(alias);
     // An explicit connect action is the only request-creation path. Polling and reconnects never re-authorize.
@@ -126,13 +129,8 @@ export class EnvironmentManager {
     for (const alias of this.entries.keys()) this.status(alias);
   }
   private async activate(alias: string, entry: Entry) {
-    const policy = this.broker.config.environments![alias]!,
-      host = this.broker.config.hosts[policy.host]!;
-    requireThat(policy.enrolled !== false, "Environment setup required");
-    const manifest = loadManifest(this.broker.config.artifact_directory!);
-    const artifact = manifest.artifacts.find((a) => a.platform === policy.platform);
-    requireThat(artifact, "No patched artifact for this platform");
-    const file = await verifyArtifact(this.broker.config.artifact_directory!, artifact);
+    const configured = this.broker.config.environments![alias]!,
+      host = this.broker.config.hosts[configured.host]!;
     await this.broker.operation(
       this.broker.config.worker_uid,
       entry.grant!,
@@ -141,8 +139,29 @@ export class EnvironmentManager {
       async (signal, grant) => {
         await checkHostTrust(this.broker.config, host, signal);
         signal.throwIfAborted();
+        const policy =
+          configured.enrolled === false
+            ? await provisionEnvironment(
+                this.broker.config,
+                alias,
+                signal,
+                (phase, detail, progress) => {
+                  entry.status.phase = phase;
+                  entry.status.detail = detail;
+                  if (progress === undefined) delete entry.status.progress;
+                  else entry.status.progress = progress;
+                },
+              )
+            : configured;
+        const manifest = loadManifest(this.broker.config.artifact_directory!);
+        const artifact = manifest.artifacts.find((a) => a.platform === policy.platform);
+        requireThat(artifact, "No patched artifact for this platform");
+        const file = await verifyArtifact(this.broker.config.artifact_directory!, artifact);
+        entry.status.phase = "connecting";
+        entry.status.detail = "Starting the protected remote connection";
+        delete entry.status.progress;
         const command = policy.platform.startsWith("win-")
-          ? `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(`& '${policy.supervisor.replaceAll("'", "''")}' connect`, "utf16le").toString("base64")}`
+          ? `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(`& '${policy.supervisor.replaceAll("'", "''")}' connect`, "utf16le").toString("base64")}`
           : `${shellQuote(policy.supervisor)} connect`;
         const child = spawn("/usr/bin/ssh", sshArgs(this.broker.config, host, command), {
           detached: true,
@@ -221,17 +240,23 @@ export class EnvironmentManager {
           heartbeat.unref();
           if (hello.revision !== manifest.revision) {
             entry.status.phase = "updating";
+            entry.status.detail = "Installing the current T3 runtime";
+            let sent = 0;
             await protocol.request("install-begin", { artifact });
             for await (const bytes of createReadStream(file, { highWaterMark: 65536 })) {
               signal.throwIfAborted();
               await protocol.request("install-chunk", {
                 data: (bytes as Buffer).toString("base64"),
               });
+              sent += (bytes as Buffer).length;
+              entry.status.progress = Math.floor((sent * 100) / artifact.bytes);
             }
             await protocol.request("install-finish", {}, 120000);
           }
           signal.throwIfAborted();
           entry.status.phase = "connecting";
+          entry.status.detail = "Starting T3 on the remote machine";
+          delete entry.status.progress;
           const ready = record(
             await protocol.request(
               "start",

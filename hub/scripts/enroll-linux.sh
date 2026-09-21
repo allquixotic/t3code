@@ -1,14 +1,18 @@
 #!/bin/sh
 # Run only the hub-built installer under the selected host's timed SSH grant.
 set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
 umask 022
 if [ "$(id -u)" -ne 0 ] || [ "$(uname -s)" != Linux ]; then
   printf '%s\n' 'Run enrollment as administrator on the selected Linux remote.' >&2; exit 1
 fi
-if [ "$#" -ne 6 ]; then
+if [ "$#" -ne 6 ] && [ "$#" -ne 7 ]; then
   printf '%s\n' 'Usage: enroll-linux.sh ARCHIVE SHA256 CONFIG CONFIG_SHA256 SERVICE SERVICE_SHA256' >&2; exit 1
 fi
 archive=$1; archive_sha=$2; config=$3; config_sha=$4; unit=$5; unit_sha=$6
+expected_hostname=${7:-}
+if [ -n "$expected_hostname" ]; then test "$(hostname)" = "$expected_hostname" || exit 1; fi
 for path in /etc/t3-hub /var/lib/t3-hub /usr/local/bin/t3-hub-agent /etc/systemd/system/t3-hub-remote.service; do
   if [ -e "$path" ] || [ -L "$path" ]; then printf 'Already present: %s; inspect existing enrollment before retrying.\n' "$path" >&2; exit 1; fi
 done
@@ -34,12 +38,12 @@ cp "$archive" "$staging/runtime.tar"
 cp "$config" "$staging/remote.json"
 cp "$unit" "$staging/t3-hub-remote.service"
 printf '%s  %s\n' "$archive_sha" "$staging/runtime.tar" "$config_sha" "$staging/remote.json" "$unit_sha" "$staging/t3-hub-remote.service" | sha256sum -c -
-python3 - "$staging/remote.json" <<'PY'
+python3 - "$staging/remote.json" "$expected_hostname" <<'PY'
 import json,pwd,os,sys,platform
 c=json.load(open(sys.argv[1])); p=pwd.getpwnam(c['runtime_user'])
 assert c['ssh_user']==p.pw_name and c['runtime_uid']==p.pw_uid and c['runtime_gid']==p.pw_gid and c['runtime_home']==p.pw_dir
 assert c['root_directory']=='/var/lib/t3-hub/releases' and c['base_directory']=='/var/lib/t3-hub/state' and c['socket']=='/run/t3-hub/supervisor.sock'
-assert c['alias']==platform.node().split('.')[0], 'Remote hostname does not match explicitly selected alias'
+assert platform.node()==sys.argv[2] if sys.argv[2] else c['alias']==platform.node().split('.')[0], 'Selected remote hostname mismatch'
 assert p.pw_uid>=0 and c['public_key'].startswith('-----BEGIN PUBLIC KEY-----')
 PY
 runtime_user=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["runtime_user"])' "$staging/remote.json")
@@ -61,15 +65,6 @@ cat > /usr/local/bin/t3-hub-agent <<'SH'
 exec /var/lib/t3-hub/releases/bootstrap/t3 __hub-agent "$@" --config /etc/t3-hub/remote.json
 SH
 chmod 0755 /usr/local/bin/t3-hub-agent
-install -m 0644 "$staging/t3-hub-remote.service" /etc/systemd/system/t3-hub-remote.service
-systemctl daemon-reload
-systemctl enable --now t3-hub-remote.service
-attempt=0
-until test -S /run/t3-hub/supervisor.sock; do
-  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
-  systemctl is-active --quiet t3-hub-remote.service || exit 1
-  sleep 1
-done
 # Only the new enrollment is removed by rollback; user data and prior tools remain.
 cat > /var/lib/t3-hub/rollback-enrollment.sh <<SH
 #!/bin/sh
@@ -84,5 +79,14 @@ systemctl daemon-reload
 printf '%s\\n' 'Enrollment disabled. Runtime/state retained in /var/lib/t3-hub.'
 SH
 chmod 0700 /var/lib/t3-hub/rollback-enrollment.sh
+install -m 0644 "$staging/t3-hub-remote.service" /etc/systemd/system/t3-hub-remote.service
+systemctl daemon-reload
+systemctl enable --now t3-hub-remote.service
+attempt=0
+until test -S /run/t3-hub/supervisor.sock; do
+  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
+  systemctl is-active --quiet t3-hub-remote.service || exit 1
+  sleep 1
+done
 completed=yes
 printf '%s\n' 'ENROLLED: protected supervisor ready; no T3 runtime starts until a signed timed lease arrives.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'

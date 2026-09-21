@@ -164,6 +164,15 @@ export function mapRemoteEnvironmentError(
       });
     case "RemoteEnvironmentAuthInvalidJsonError":
     case "RemoteEnvironmentAuthUndeclaredStatusError":
+      if (
+        error._tag === "RemoteEnvironmentAuthUndeclaredStatusError" &&
+        error.status === 423 &&
+        /\/hub\/environments\/[^/]+\//.test(error.requestUrl)
+      )
+        return new ConnectionBlockedError({
+          reason: "permission",
+          detail: "Timed access is locked. Approve access to reconnect.",
+        });
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: error.message,

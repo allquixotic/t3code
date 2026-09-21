@@ -107,11 +107,22 @@ export interface ReleaseManifest {
 export interface EnvironmentStatus {
   alias: string;
   label: string;
-  phase: "unenrolled" | "locked" | "pending" | "updating" | "connecting" | "active" | "error";
+  phase:
+    | "unenrolled"
+    | "locked"
+    | "pending"
+    | "checking"
+    | "installing"
+    | "updating"
+    | "connecting"
+    | "active"
+    | "error";
   approval_url?: string;
   expires_at?: string;
   error?: string;
   http_base_url?: string;
   pairing_code?: string;
   revision?: string;
+  detail?: string;
+  progress?: number;
 }

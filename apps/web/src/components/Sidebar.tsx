@@ -1,3 +1,4 @@
+import { HubProjectEntries } from "./HubProjects";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -4531,6 +4532,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
+        <HubProjectEntries />
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (

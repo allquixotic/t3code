@@ -7,7 +7,7 @@ umask 022
 if [ "$(id -u)" -ne 0 ] || [ "$(uname -s)" != Darwin ] || [ "$(uname -m)" != arm64 ]; then
   printf '%s\n' 'Run enrollment as administrator on the selected Apple Silicon Mac.' >&2; exit 1
 fi
-if [ "$#" -ne 7 ]; then
+if [ "$#" -ne 7 ] && [ "$#" -ne 8 ]; then
   printf '%s\n' 'Usage: enroll-macos.sh BOOTSTRAP SHA256 CONFIG CONFIG_SHA256 PLIST PLIST_SHA256 EXPECTED_HOSTNAME' >&2; exit 1
 fi
 archive=$1; archive_sha=$2; config=$3; config_sha=$4; plist=$5; plist_sha=$6
@@ -39,6 +39,20 @@ cp "$config" "$staging/remote.json"
 cp "$plist" "$staging/service.plist"
 printf '%s  %s\n' "$archive_sha" "$staging/bootstrap.tar" "$config_sha" "$staging/remote.json" "$plist_sha" "$staging/service.plist" | shasum -a 256 -c -
 plutil -lint "$staging/service.plist"
+if [ "${8:-}" = native ]; then
+  # The verified hub artifact includes its interpreter. No remote build or package manager.
+  read_config() { plutil -extract "$1" raw -o - "$staging/remote.json"; }
+  runtime_user=$(read_config runtime_user)
+  case "$runtime_user" in ''|*[!A-Za-z0-9_.-]*) exit 1;; esac
+  test "$(read_config ssh_user)" = "$runtime_user"
+  test "$(read_config runtime_uid)" = "$(id -u "$runtime_user")"
+  test "$(read_config runtime_gid)" = "$(id -g "$runtime_user")"
+  test "$(read_config runtime_uid)" -gt 0
+  test "$(dscl . -read "/Users/$runtime_user" NFSHomeDirectory)" = "NFSHomeDirectory: $(read_config runtime_home)"
+  test "$(read_config root_directory)" = /var/lib/t3-hub/releases
+  test "$(read_config base_directory)" = /var/lib/t3-hub/state
+  test "$(read_config socket)" = /var/lib/t3-hub/run/supervisor.sock
+else
 # A Homebrew Node and its libraries may be user-writable. This isolated official interpreter
 # is used only by the enrollment selector; native T3 updates contain their own interpreter.
 node_name=node-v26.8.2-darwin-arm64
@@ -69,14 +83,16 @@ assert(c.public_key.startsWith('-----BEGIN PUBLIC KEY-----'));
 console.log(c.runtime_user);
 JS
 )
+fi
 runtime_group=$(id -gn "$runtime_user")
 install -d -o root -g wheel -m 0755 /var/lib /var/lib/t3-hub /var/lib/t3-hub/releases /var/lib/t3-hub/releases/bootstrap /var/lib/t3-hub/node /var/lib/t3-hub/node/bin /etc/t3-hub
 install -d -o "$runtime_user" -g "$runtime_group" -m 0700 /var/lib/t3-hub/state
-install -o root -g wheel -m 0755 "$node" /var/lib/t3-hub/node/bin/node
+if [ "${8:-}" != native ]; then install -o root -g wheel -m 0755 "$node" /var/lib/t3-hub/node/bin/node; fi
 tar -xf "$staging/bootstrap.tar" -C /var/lib/t3-hub/releases/bootstrap
 chown -R root:wheel /var/lib/t3-hub/releases
 chmod -R u+rwX,go+rX,go-w /var/lib/t3-hub/releases
 install -o root -g wheel -m 0644 "$staging/remote.json" /etc/t3-hub/remote.json
+if [ "${8:-}" = native ]; then /usr/bin/codesign --force --sign - /var/lib/t3-hub/releases/bootstrap/t3; fi
 /var/lib/t3-hub/releases/bootstrap/t3 --version
 dseditgroup -o create t3-hub-connect
 group_created=yes
@@ -102,13 +118,6 @@ fi
 exec /var/lib/t3-hub/releases/bootstrap/t3 __hub-agent supervise --config /etc/t3-hub/remote.json
 SH
 chmod 0755 /var/lib/t3-hub/connect /var/lib/t3-hub/supervise
-install -o root -g wheel -m 0644 "$staging/service.plist" "$service"
-launchctl bootstrap system "$service"
-attempt=0
-until test -S /var/lib/t3-hub/run/supervisor.sock; do
-  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
-  sleep 1
-done
 cat > /var/lib/t3-hub/rollback-enrollment.sh <<SH
 #!/bin/sh
 set -eu
@@ -120,5 +129,12 @@ test "\$(id -u)" -eq 0
 printf '%s\\n' 'Enrollment disabled. Runtime/state retained in /var/lib/t3-hub.'
 SH
 chmod 0700 /var/lib/t3-hub/rollback-enrollment.sh
+install -o root -g wheel -m 0644 "$staging/service.plist" "$service"
+launchctl bootstrap system "$service"
+attempt=0
+until test -S /var/lib/t3-hub/run/supervisor.sock; do
+  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
+  sleep 1
+done
 completed=yes
 printf '%s\n' 'ENROLLED: protected supervisor ready; native T3 waits for a signed timed lease.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'

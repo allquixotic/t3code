@@ -1,69 +1,70 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
-import * as Schema from "effect/Schema";
-import { HubEnvironmentStatus } from "@t3tools/contracts";
+import { useEffect, useRef } from "react";
+import { environmentCatalog } from "~/connection/catalog";
+import { useEnvironments } from "~/state/environments";
+import {
+  connectHubEnvironment,
+  disconnectHubEnvironment,
+  hubAliasForEnvironment,
+  hubEnvironmentStatusText,
+  publishHubEnvironments,
+  refreshHubEnvironments,
+  setHubClientError,
+  useHubEnvironments,
+} from "~/hubEnvironments";
 import { connectPairing } from "~/connection/onboarding";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { requestHub } from "~/hubApi";
 import { Button } from "../ui/button";
 import { SettingsSection } from "./settingsLayout";
 
-const request = (path: string, method = "GET") => requestHub(`environments/${path}`, method);
-let snapshot: {
-  environments: ReadonlyArray<HubEnvironmentStatus>;
-  error: string | null;
-  now: number;
-} = { environments: [], error: null, now: Date.now() };
-const listeners = new Set<() => void>();
-const paired = new Set<string>();
-const publish = (change: Partial<typeof snapshot>) => {
-  snapshot = { ...snapshot, ...change };
-  for (const listener of listeners) listener();
-};
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-};
-async function refreshRows() {
-  const rows = Schema.decodeUnknownSync(Schema.Array(HubEnvironmentStatus))(await request(""));
-  publish({ environments: rows, now: Date.now() });
-  return rows;
-}
-/** Keep approvals and automatic pairing progressing when Settings is closed. */
+/** Polling never asks for a grant. Reuse native credentials across timed connections. */
 export function HubEnvironmentCoordinator() {
   const connect = useAtomCommand(connectPairing, { reportFailure: false });
-  const refresh = useCallback(async () => {
-    for (const row of await refreshRows()) {
-      if (row.phase !== "active" || !row.http_base_url || !row.pairing_code) continue;
-      const key = `${row.alias}:${row.expires_at}`;
-      let saved: string | null = null;
-      try {
-        saved = localStorage.getItem(`t3.hub.paired.${row.alias}`);
-      } catch {
-        /* Memory state is sufficient when storage is unavailable. */
-      }
-      if (paired.has(key) || saved === key) continue;
-      paired.add(key);
-      const result = await connect({ host: row.http_base_url, pairingCode: row.pairing_code });
-      if (result._tag === "Failure")
-        publish({ error: `Could not pair ${row.label}. Lock and reconnect to try again.` });
-      else
-        try {
-          localStorage.setItem(`t3.hub.paired.${row.alias}`, key);
-        } catch {
-          /* No credentials are stored here. */
-        }
-    }
-  }, [connect]);
+  const retry = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const enable = useAtomCommand(environmentCatalog.setEnabled, { reportFailure: false });
+  const { environments } = useEnvironments();
+  const latest = useRef(environments);
+  useEffect(() => {
+    latest.current = environments;
+  }, [environments]);
+  const attempted = useRef(new Set<string>());
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        if (!stopped) await refresh();
+        const rows = await refreshHubEnvironments();
+        for (const row of rows) {
+          if (stopped || row.phase !== "active" || !row.http_base_url) continue;
+          const existing = latest.current.find(
+            (item) => hubAliasForEnvironment(item) === row.alias,
+          );
+          const repairCredential =
+            existing?.connection.phase === "error" &&
+            existing.connection.blockedReason === "authentication";
+          const key = `${row.alias}:${row.expires_at}:${repairCredential ? "pair" : "connect"}`;
+          if (attempted.current.has(key)) continue;
+          setHubClientError(row.alias, null);
+          attempted.current.add(key);
+          // A new lease normally reuses the native credential. Repair an invalid credential
+          // at most once within that lease, without requesting or extending access.
+          let succeeded = false;
+          if (existing && !repairCredential) {
+            const enabled = await enable({ environmentId: existing.environmentId, enabled: true });
+            if (enabled._tag === "Success")
+              succeeded = (await retry(existing.environmentId))._tag === "Success";
+          } else if (row.pairing_code) {
+            succeeded =
+              (await connect({ host: row.http_base_url, pairingCode: row.pairing_code }))._tag ===
+              "Success";
+          }
+          if (!succeeded)
+            setHubClientError(
+              row.alias,
+              `Could not connect this client to ${row.label}. Cancel the connection and retry.`,
+            );
+        }
       } catch {
-        if (!stopped) publish({ error: "Hub connection service unavailable" });
+        if (!stopped) publishHubEnvironments({ error: "Hub connection service unavailable" });
       }
       if (!stopped) timer = setTimeout(() => void poll(), 2000);
     };
@@ -72,21 +73,19 @@ export function HubEnvironmentCoordinator() {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [connect, enable, retry]);
   return null;
 }
 export function HubEnvironments() {
-  const { environments, error, now } = useSyncExternalStore(subscribe, () => snapshot);
-  const setError = (error: string | null) => publish({ error });
-  const refresh = refreshRows;
+  const { environments, error, now } = useHubEnvironments();
+  const setError = (error: string | null) => publishHubEnvironments({ error });
+  const refresh = refreshHubEnvironments;
   const start = async (alias: string) => {
     setError(null);
     const approval = window.open("about:blank", "_blank");
     if (approval) approval.opener = null;
     try {
-      const row = Schema.decodeUnknownSync(HubEnvironmentStatus)(
-        await request(`${encodeURIComponent(alias)}/connect`, "POST"),
-      );
+      const row = await connectHubEnvironment(alias);
       if (row.approval_url && approval) approval.location.href = row.approval_url;
       else approval?.close();
       await refresh();
@@ -111,7 +110,9 @@ export function HubEnvironments() {
         const seconds = environment.expires_at
           ? Math.max(0, Math.ceil((Date.parse(environment.expires_at) - now) / 1000))
           : 0;
-        const busy = ["connecting", "updating"].includes(environment.phase);
+        const busy = ["checking", "installing", "connecting", "updating"].includes(
+          environment.phase,
+        );
         return (
           <div
             key={environment.alias}
@@ -120,17 +121,9 @@ export function HubEnvironments() {
             <div className="min-w-0">
               <p className="text-sm font-medium">{environment.label}</p>
               <p className="text-xs text-muted-foreground" aria-live="polite">
-                {environment.phase === "unenrolled"
-                  ? "Setup required"
-                  : environment.phase === "active"
-                    ? `Connected · ${Math.ceil(seconds / 60)} minutes remaining`
-                    : environment.phase === "pending"
-                      ? "Waiting for passkey approval"
-                      : environment.phase === "updating"
-                        ? "Updating remote software…"
-                        : environment.phase === "connecting"
-                          ? "Connecting…"
-                          : (environment.error ?? "Locked")}
+                {environment.phase === "active"
+                  ? `Connected · ${Math.ceil(seconds / 60)} minutes remaining`
+                  : hubEnvironmentStatusText(environment)}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -149,7 +142,7 @@ export function HubEnvironments() {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    void request(`${environment.alias}/disconnect`, "POST")
+                    void disconnectHubEnvironment(environment.alias)
                       .then(refresh)
                       .catch(() => setError("Could not revoke access"))
                   }
@@ -157,11 +150,7 @@ export function HubEnvironments() {
                   Lock
                 </Button>
               ) : (
-                <Button
-                  size="sm"
-                  disabled={environment.phase === "unenrolled"}
-                  onClick={() => void start(environment.alias)}
-                >
+                <Button size="sm" onClick={() => void start(environment.alias)}>
                   Connect
                 </Button>
               )}

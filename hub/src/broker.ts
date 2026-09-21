@@ -45,11 +45,13 @@ export class Broker {
         path_pattern: p.path_pattern,
       };
     for (const [alias, p] of Object.entries(this.config.environments ?? {})) {
-      if (p.enrolled === false) continue;
       capabilities[`environment:${alias}`] = {
         ...this.config.hosts[p.host],
         label: p.label,
-        updates: "Patched runtime installed automatically from this hub",
+        updates:
+          p.enrolled === false
+            ? "Check this machine and install its protected T3 supervisor and patched runtime if needed. Access ends at the approved deadline."
+            : "Patched runtime installed automatically from this hub",
       };
     }
     return {

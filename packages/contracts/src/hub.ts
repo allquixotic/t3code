@@ -17,6 +17,8 @@ export const HubEnvironmentStatus = Schema.Struct({
     "unenrolled",
     "locked",
     "pending",
+    "checking",
+    "installing",
     "updating",
     "connecting",
     "active",
@@ -28,5 +30,7 @@ export const HubEnvironmentStatus = Schema.Struct({
   http_base_url: Schema.optional(Schema.String),
   pairing_code: Schema.optional(Schema.String),
   revision: Schema.optional(Schema.String),
+  detail: Schema.optional(Schema.String),
+  progress: Schema.optional(Schema.Finite),
 });
 export type HubEnvironmentStatus = typeof HubEnvironmentStatus.Type;

@@ -1,3 +1,4 @@
+import { HubProjectCoordinator } from "../components/HubProjects";
 import { HubEnvironmentCoordinator } from "../components/settings/HubEnvironments";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -235,7 +236,12 @@ function RootRouteView() {
           ) : null}
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
-          {primaryEnvironmentAuthenticated ? <HubEnvironmentCoordinator /> : null}
+          {primaryEnvironmentAuthenticated ? (
+            <>
+              <HubEnvironmentCoordinator />
+              <HubProjectCoordinator />
+            </>
+          ) : null}
           {primaryEnvironmentAuthenticated ? <HubApprovalNotificationCoordinator /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the

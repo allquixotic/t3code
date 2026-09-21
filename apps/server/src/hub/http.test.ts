@@ -10,7 +10,6 @@ import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi";
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as NodeHttp from "node:http";
-import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -82,8 +81,10 @@ beforeEach(async () => {
     response.end(JSON.stringify(request.url === "/v1/approvals" ? [approval] : []));
   });
   const socket = NodePath.join(directory, "worker.sock");
-  worker.listen(socket);
-  await NodeEvents.once(worker, "listening");
+  await new Promise<void>((resolve, reject) => {
+    worker.once("error", reject);
+    worker.listen(socket, resolve);
+  });
   vi.stubEnv("T3_HUB_BROKER_SOCKET", socket);
   app = makeApp();
 });
