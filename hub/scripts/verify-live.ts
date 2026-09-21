@@ -192,10 +192,13 @@ if (action === "request") {
     ]);
     if (mode === "expiry" && Date.now() < Date.parse(status.expires_at) - 2000)
       throw new Error("Connection ended before the approved deadline; not an expiry proof");
-    const locked = await fetch(base + "/", { signal: AbortSignal.timeout(10000) });
+    // systemd's whole-second runtime limit may close the socket just before the
+    // broker's millisecond deadline. Check the final gate at that exact deadline.
+    if (mode === "expiry") await delay(Math.max(0, Date.parse(status.expires_at) - Date.now()));
     const final = await api("GET", "");
+    const locked = await fetch(base + "/", { signal: AbortSignal.timeout(10000) });
     if (locked.status !== 423 || final.phase !== "locked")
-      throw new Error("Expired/revoked environment still accessible");
+      throw new Error(`Expiry/revoke check failed: HTTP ${locked.status}, phase ${final.phase}`);
     console.log(
       `PASS: native terminal ran on ${alias}; ${mode} closed its existing websocket and rejected new access (HTTP 423).`,
     );
