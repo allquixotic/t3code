@@ -1,6 +1,6 @@
 {
   "alias": "mbp",
-  "socket": "/var/run/t3-hub/supervisor.sock",
+  "socket": "/var/lib/t3-hub/run/supervisor.sock",
   "public_key": "INSERT THE PUBLIC ED25519 LEASE KEY, NEVER THE PRIVATE KEY",
   "ssh_user": "sean",
   "runtime_user": "sean",

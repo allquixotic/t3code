@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>org.allquixotic.t3-hub</string>
-<key>ProgramArguments</key><array><string>/var/lib/t3-hub/releases/bootstrap/t3</string><string>__hub-agent</string><string>supervise</string><string>--config</string><string>/etc/t3-hub/remote.json</string></array>
+<key>ProgramArguments</key><array><string>/var/lib/t3-hub/supervise</string></array>
 <key>UserName</key><string>root</string>
 <key>GroupName</key><string>t3-hub-connect</string>
 <key>RunAtLoad</key><true/>

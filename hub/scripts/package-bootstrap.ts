@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { hubOnly, root } from "./maintain.ts";
 
-// Small first-enrollment transport for Linux hosts that already have administrator-owned Node.
+// Small first-enrollment transport using an administrator-owned Node runtime.
 // The full runtime still arrives through the signed, timed native update protocol.
 hubOnly();
 const destination = resolve(process.argv[2] ?? "hub/bootstrap.tar");
+const platform = process.argv[3] ?? "linux";
+if (!["linux", "darwin"].includes(platform)) throw new Error("Choose linux or darwin bootstrap");
+const node = platform === "darwin" ? "/var/lib/t3-hub/node/bin/node" : "/usr/bin/node";
 const temporary = mkdtempSync(join(tmpdir(), "t3-hub-bootstrap-"));
 try {
   const source = join(root, "hub/dist/src");
@@ -33,7 +36,7 @@ try {
   writeFileSync(join(temporary, "bootstrap-revision"), revision + "\n");
   writeFileSync(
     join(temporary, "t3"),
-    '#!/bin/sh\nexec /usr/bin/node "$(dirname -- "$0")/bootstrap.mjs" "$@"\n',
+    `#!/bin/sh\nexec ${node} "$(dirname -- "$0")/bootstrap.mjs" "$@"\n`,
     { mode: 0o755 },
   );
   writeFileSync(
@@ -46,8 +49,9 @@ const args = process.argv.slice(2);
 if (args.length === 1 && args[0] === '--version') {
   console.log('T3 Hub enrollment supervisor ${revision}; full runtime requires a signed lease');
 } else {
-  if (process.platform !== 'linux' || args.length !== 4 || args[0] !== '__hub-agent' || args[2] !== '--config')
-    throw new Error('Only the Linux enrollment supervisor is available');
+  if (process.platform !== '${platform}' || args.length !== 4 || args[0] !== '__hub-agent' || args[2] !== '--config')
+    throw new Error('Only the ${platform} enrollment supervisor is available');
+  protectedPath(process.execPath);
   const path = args[3], action = args[1], info = lstatSync(path);
   if (!info.isFile() || info.uid !== 0 || (info.mode & 0o022) !== 0) throw new Error('Administrator-owned remote policy required');
   protectedPath(path);

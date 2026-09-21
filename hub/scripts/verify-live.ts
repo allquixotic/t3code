@@ -27,6 +27,11 @@ if (action === "request") {
   );
 } else if (action === "exercise") {
   if (!["revoke", "expiry"].includes(mode)) throw new Error("Choose revoke or expiry");
+  const expectedUser = process.argv[5] ?? "sean";
+  const expectedHome = process.argv[6] ?? "/home/sean";
+  const expectedHostname = process.argv[7] ?? alias;
+  if (!/^[A-Za-z0-9_.-]+$/.test(expectedUser) || !expectedHome.startsWith("/"))
+    throw new Error("Supply the verified remote account and absolute home directory");
   let status = await api("GET", "");
   const readyDeadline = Date.now() + 180000;
   while (
@@ -153,7 +158,7 @@ if (action === "request") {
       ]);
     send("subscribeTerminalEvents", {});
     const terminal = { threadId: "hub-enrollment-" + randomUUID(), terminalId: "term-1" };
-    await rpc("terminal.open", { ...terminal, cwd: "/home/sean", cols: 80, rows: 24 });
+    await rpc("terminal.open", { ...terminal, cwd: expectedHome, cols: 80, rows: 24 });
     await rpc("terminal.write", {
       ...terminal,
       data: "printf '\\nHUB_SMOKE_BEGIN\\n'; hostname; id -un; pwd; printf 'HUB_SMOKE_END\\n'\n",
@@ -165,9 +170,9 @@ if (action === "request") {
       }),
     ]);
     if (
-      observed[0]?.split(".")[0] !== alias ||
-      observed[1] !== "sean" ||
-      observed[2] !== "/home/sean"
+      observed[0]?.split(".")[0] !== expectedHostname.split(".")[0] ||
+      observed[1] !== expectedUser ||
+      observed[2] !== expectedHome
     )
       throw new Error("Native terminal identity mismatch");
     console.log(
