@@ -26,7 +26,11 @@ The application owns delivery. After an explicit Connect and timed passkey appro
 
 Do not preemptively update the fleet. Existing enrollment is reused; first enrollment is an administrator setup action with pinned hub public key, trusted supervisor, OS service, runtime identity, and recovery path. Do not silently treat plain upstream SSH remotes as broker-managed. Every configured managed environment must reject access while locked and require its own timed approval after expiry. Polling, reconnects, deployment, and browser reloads must never create or extend a grant.
 
-For an authorized remote smoke test use the installed broker and the `jump` workflow: exact approval link, automatic bounded wait, status recheck, identity verification, then scoped testing. Revoke task grants afterward. `mbp` is the existing selected test target; this does not authorize authentication changes or writes to other hosts.
+Deferred destinations use `enrolled: false` and appear as **Setup required** without contacting or installing anything on those machines. This deployment replaces the Windows `seanaorus` environment with Linux `seanaoruslin`; other destinations remain deferred until the user selects them for enrollment. On an already provisioned Linux Node host, `hub/scripts/package-bootstrap.ts` creates a small supervisor archive locally for initial transfer through broker SSH; the full runtime follows automatically after timed approval. Follow the verified administrator-owned Node and checksum requirements in `hub/OPERATIONS.md`.
+
+For an authorized remote smoke test use the installed broker: exact approval link, automatic bounded wait, status recheck, identity verification, then scoped testing. The current enrolled test target is `seanaoruslin`; use the host explicitly selected in the active task. `hub/scripts/verify-live.ts` requests a native environment connection and checks terminal identity plus revoke/expiry, holding pairing credentials only in memory. Use a 1-minute approval for the bounded expiry check. Revoke task grants afterward. This does not authorize authentication changes or writes to other hosts.
+
+When installing from an active T3 agent, use `--defer-t3-restart` and leave the final `sudo systemctl restart t3code.service` to a separate administrator terminal so the current turn can finish verification. Record the exact protected rollback directory. Backup/restore must preserve file owners and modes, and atomic replacement files must be created on the destination's mount.
 
 ## Finish
 

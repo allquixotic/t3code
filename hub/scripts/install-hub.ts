@@ -78,7 +78,8 @@ const paths = [
 const saved = paths.map((path, index) => {
   const exists = existsSync(path);
   if (exists) cpSync(path, join(backup, String(index)), { dereference: false });
-  return { path, copy: String(index), exists };
+  const info = exists ? lstatSync(path) : undefined;
+  return { path, copy: String(index), exists, uid: info?.uid, gid: info?.gid, mode: info?.mode };
 });
 const oldT3 = readlinkSync("/opt/t3/current");
 writeFileSync(join(backup, "restore.json"), JSON.stringify({ saved, oldT3 }, null, 2), {
@@ -185,11 +186,9 @@ try {
       { mode: 0o644 },
     );
   }
-  for (const [index, path] of [
-    "/home/sean/bin/hub-access",
-    "/usr/local/lib/hub-broker/hub-access",
-  ].entries()) {
-    const next = join(backup, `client-${index}`);
+  for (const path of ["/home/sean/bin/hub-access", "/usr/local/lib/hub-broker/hub-access"]) {
+    // The worker home may be a separate mount: stage beside the destination.
+    const next = path + ".hub-next";
     writeFileSync(next, wrapper, { mode: 0o755, flag: "wx" });
     chmodSync(next, 0o755);
     renameSync(next, path);
@@ -239,18 +238,25 @@ try {
     `Installed ${manifest.baseline} / ${manifest.revision}. Approve a new timed connection for the first live test.`,
   );
 } catch (error) {
+  console.error(
+    "Installation failed; restoring previous services:",
+    error instanceof Error ? error.message : "unknown error",
+  );
   execFileSync("systemctl", ["stop", "hub-broker.service", "hub-unlocker.service"], {
     stdio: "inherit",
   });
   for (const item of saved) {
-    if (item.exists) cpSync(join(backup, item.copy), item.path, { dereference: false });
-    else rmSync(item.path, { force: true });
+    if (item.exists) {
+      cpSync(join(backup, item.copy), item.path, { dereference: false });
+      lchownSync(item.path, item.uid!, item.gid!);
+      if (!lstatSync(item.path).isSymbolicLink()) chmodSync(item.path, item.mode! & 0o7777);
+    } else rmSync(item.path, { force: true });
   }
   switchLink("/opt/t3/current", oldT3);
   execFileSync("systemctl", ["daemon-reload"], { stdio: "inherit" });
   execFileSync("systemctl", ["start", "hub-unlocker.service", "hub-broker.service"], {
     stdio: "inherit",
   });
-  execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
+  if (!deferRestart) execFileSync("systemctl", ["restart", "t3code.service"], { stdio: "inherit" });
   throw error;
 }

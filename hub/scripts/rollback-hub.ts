@@ -1,5 +1,14 @@
 import { hostname } from "node:os";
-import { readFileSync, cpSync, rmSync, symlinkSync, renameSync } from "node:fs";
+import {
+  readFileSync,
+  cpSync,
+  rmSync,
+  symlinkSync,
+  renameSync,
+  lstatSync,
+  lchownSync,
+  chmodSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 if (hostname().split(".")[0] !== "t3code" || process.getuid?.() !== 0)
@@ -8,15 +17,27 @@ const backup = resolve(process.argv[2] ?? "");
 if (!/^\/var\/backups\/t3-hub\/\d+$/.test(backup))
   throw new Error("Select one concrete protected backup directory");
 const state = JSON.parse(readFileSync(join(backup, "restore.json"), "utf8")) as {
-  saved: { path: string; copy: string; exists: boolean }[];
+  saved: {
+    path: string;
+    copy: string;
+    exists: boolean;
+    uid?: number;
+    gid?: number;
+    mode?: number;
+  }[];
   oldT3: string;
 };
 execFileSync("systemctl", ["stop", "hub-broker.service", "hub-unlocker.service"], {
   stdio: "inherit",
 });
 for (const item of state.saved) {
-  if (item.exists) cpSync(join(backup, item.copy), item.path, { dereference: false });
-  else rmSync(item.path, { force: true });
+  if (item.exists) {
+    const copy = join(backup, item.copy),
+      info = lstatSync(copy);
+    cpSync(copy, item.path, { dereference: false });
+    lchownSync(item.path, item.uid ?? info.uid, item.gid ?? info.gid);
+    if (!info.isSymbolicLink()) chmodSync(item.path, (item.mode ?? info.mode) & 0o7777);
+  } else rmSync(item.path, { force: true });
 }
 const link = "/opt/t3/current";
 rmSync(link + ".rollback", { force: true });
