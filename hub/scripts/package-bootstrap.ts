@@ -18,6 +18,7 @@ try {
   mkdirSync(join(temporary, "src"));
   for (const name of [
     "remote",
+    "readiness",
     "archive",
     "artifacts",
     "agent-proxy",

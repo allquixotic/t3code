@@ -131,10 +131,6 @@ SH
 chmod 0700 /var/lib/t3-hub/rollback-enrollment.sh
 install -o root -g wheel -m 0644 "$staging/service.plist" "$service"
 launchctl bootstrap system "$service"
-attempt=0
-until test -S /var/lib/t3-hub/run/supervisor.sock; do
-  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
-  sleep 1
-done
+# The connecting transport verifies readiness under the same approved deadline.
 completed=yes
-printf '%s\n' 'ENROLLED: protected supervisor ready; native T3 waits for a signed timed lease.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'
+printf '%s\n' 'ENROLLED: protected supervisor installed; readiness is verified on connection.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'

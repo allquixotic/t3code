@@ -82,11 +82,7 @@ chmod 0700 /var/lib/t3-hub/rollback-enrollment.sh
 install -m 0644 "$staging/t3-hub-remote.service" /etc/systemd/system/t3-hub-remote.service
 systemctl daemon-reload
 systemctl enable --now t3-hub-remote.service
-attempt=0
-until test -S /run/t3-hub/supervisor.sock; do
-  attempt=$((attempt+1)); test "$attempt" -lt 30 || { printf '%s\n' 'Supervisor socket readiness failed' >&2; exit 1; }
-  systemctl is-active --quiet t3-hub-remote.service || exit 1
-  sleep 1
-done
+# The connecting transport waits for the service socket and verifies its hello.
+# Service launch is not proof of readiness, and startup has no estimated duration.
 completed=yes
-printf '%s\n' 'ENROLLED: protected supervisor ready; no T3 runtime starts until a signed timed lease arrives.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'
+printf '%s\n' 'ENROLLED: protected supervisor installed; readiness is verified on connection.' 'Rollback: sudo /bin/sh /var/lib/t3-hub/rollback-enrollment.sh'

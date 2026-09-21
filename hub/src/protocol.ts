@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - protected Node I/O adapter, also runs outside the Effect host.
-import { EventEmitter } from "node:events";
-import { Duplex, type Readable, type Writable } from "node:stream";
-import { once } from "node:events";
+// oxlint-disable-next-line t3code/namespace-node-imports -- Named Node event exports are required by the standalone emitter.
+import { EventEmitter, once } from "node:events";
+import * as NodeStream from "node:stream";
 import { packets, frame } from "./agent-proxy.ts";
 import { record, text, integer, requireThat, HubError } from "./io.ts";
 
@@ -16,15 +16,15 @@ export class Protocol extends EventEmitter {
   private sequence = 0;
   private pending = new Map<
     number,
-    { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
+    { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void }
   >();
   private writes: Promise<void> = Promise.resolve();
   private closed = false;
   private queuedBytes = 0;
   handler?: (type: string, payload: unknown) => Promise<unknown>;
-  readonly input: Readable;
-  readonly output: Writable;
-  constructor(input: Readable, output: Writable) {
+  readonly input: NodeStream.Readable;
+  readonly output: NodeStream.Writable;
+  constructor(input: NodeStream.Readable, output: NodeStream.Writable) {
     super();
     this.input = input;
     this.output = output;
@@ -38,7 +38,7 @@ export class Protocol extends EventEmitter {
           const pending = this.pending.get(integer(packet.id));
           requireThat(pending, "Unknown protocol response");
           this.pending.delete(integer(packet.id));
-          clearTimeout(pending.timer);
+          pending.cleanup();
           if (packet.error) pending.reject(new HubError("Remote operation failed"));
           else pending.resolve(packet.payload);
         } else if (packet.id !== undefined) {
@@ -81,17 +81,35 @@ export class Protocol extends EventEmitter {
     });
     return operation;
   }
-  request(type: string, payload: unknown, timeout = 30000): Promise<unknown> {
+  request(
+    type: string,
+    payload: unknown,
+    lifetime: number | AbortSignal = 30000,
+  ): Promise<unknown> {
     requireThat(!this.closed && this.pending.size < 128, "Connection unavailable or overloaded");
+    if (typeof lifetime !== "number") lifetime.throwIfAborted();
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new HubError("Remote operation timed out"));
+      const stop = () => {
+        reject(
+          new HubError(
+            typeof lifetime === "number"
+              ? "Remote operation timed out"
+              : "Remote operation cancelled",
+          ),
+        );
         this.close();
-      }, timeout);
-      timer.unref();
-      this.pending.set(id, { resolve, reject, timer });
+      };
+      let cleanup: () => void;
+      if (typeof lifetime === "number") {
+        const timer = setTimeout(stop, lifetime);
+        timer.unref();
+        cleanup = () => clearTimeout(timer);
+      } else {
+        lifetime.addEventListener("abort", stop, { once: true });
+        cleanup = () => lifetime.removeEventListener("abort", stop);
+      }
+      this.pending.set(id, { resolve, reject, cleanup });
       void this.send({ type, id, payload }).catch(() => this.close());
     });
   }
@@ -99,7 +117,7 @@ export class Protocol extends EventEmitter {
     if (this.closed) return;
     this.closed = true;
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      pending.cleanup();
       pending.reject(new HubError("Remote connection closed"));
     }
     this.pending.clear();
@@ -108,7 +126,7 @@ export class Protocol extends EventEmitter {
     this.emit("closed");
   }
 }
-export class Channel extends Duplex {
+export class Channel extends NodeStream.Duplex {
   readonly protocol: Protocol;
   readonly channelId: number;
   constructor(protocol: Protocol, channelId: number) {

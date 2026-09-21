@@ -33,11 +33,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Could not protect enrollment ownership' }
   Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtStartup) | Out-Null
   Start-ScheduledTask -TaskName $task
-  $pipe = New-Object IO.Pipes.NamedPipeClientStream('.', 't3-hub-supervisor', [IO.Pipes.PipeDirection]::InOut)
-  try { $pipe.Connect(30000) } finally { $pipe.Dispose() }
+  # The connecting transport verifies the named pipe and hello under the approved deadline.
   Remove-Item "$root\runtime.tar"
   $completed = $true
-  Write-Output 'ENROLLED: protected supervisor ready; native T3 waits for a signed timed lease.'
+  Write-Output 'ENROLLED: protected supervisor installed; readiness is verified on connection.'
 } finally {
   if (-not $completed) {
     Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue

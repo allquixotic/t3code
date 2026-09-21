@@ -8,7 +8,7 @@ import { Broker } from "./broker.ts";
 import { Protocol, Channel } from "./protocol.ts";
 import { loadManifest, verifyArtifact } from "./artifacts.ts";
 import { checkHostTrust, sshArgs, shellQuote } from "./ssh.ts";
-import { record, text, integer, requireThat, message, HubError, digest } from "./io.ts";
+import { record, text, integer, requireThat, message, digest } from "./io.ts";
 import type { EnvironmentStatus } from "./types.ts";
 import { signLease } from "./lease.ts";
 import * as NodeTimersPromises from "node:timers/promises";
@@ -173,8 +173,7 @@ export class EnvironmentManager {
           ? `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(`& '${policy.supervisor.replaceAll("'", "''")}' connect`, "utf16le").toString("base64")}`
           : `${shellQuote(policy.supervisor)} connect`;
         let upgrading = false;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          if (attempt > 0) await NodeTimersPromises.setTimeout(1000, undefined, { signal });
+        for (;;) {
           signal.throwIfAborted();
           const child = NodeChildProcess.spawn(
             "/usr/bin/ssh",
@@ -209,7 +208,11 @@ export class EnvironmentManager {
               identity = record(value);
             });
             void protocol.start();
-            const hello = record(await protocol.request("hello", {}));
+            const hello = record(await protocol.request("hello", {}, signal));
+            const reconnecting = upgrading;
+            // Only an unavailable supervisor is retryable. Once it answers, real
+            // identity, installation and startup failures must reach the user.
+            upgrading = false;
             requireThat(
               hello.protocol === 1 &&
                 hello.platform === policy.platform &&
@@ -229,6 +232,15 @@ export class EnvironmentManager {
                 identity.cwd.length > 0,
               "Remote account or working directory preflight failed",
             );
+            if (reconnecting && hello.skills_version !== 1) {
+              requireThat(
+                hello.revision === manifest.revision,
+                "Remote installation revision mismatch",
+              );
+              // The old process can answer briefly before the service re-execs it.
+              upgrading = true;
+              continue;
+            }
             this.broker.audit("environment_identity", {
               alias,
               hostname: identity.hostname,
@@ -258,7 +270,7 @@ export class EnvironmentManager {
             heartbeat.unref();
             if (hello.revision !== manifest.revision) {
               entry.status.phase = "updating";
-              entry.status.detail = "Installing the current T3 runtime";
+              entry.status.detail = "Transferring the current T3 runtime";
               let sent = 0;
               await protocol.request("install-begin", { artifact });
               for await (const bytes of NodeFS.createReadStream(file, { highWaterMark: 65536 })) {
@@ -269,7 +281,15 @@ export class EnvironmentManager {
                 sent += (bytes as Buffer).length;
                 entry.status.progress = Math.floor((sent * 100) / artifact.bytes);
               }
-              await protocol.request("install-finish", {}, 120000);
+              entry.status.detail = "Verifying and installing the uploaded runtime";
+              delete entry.status.progress;
+              // Completion comes from the verified installation receipt, never an estimate.
+              // Heartbeats still detect transport loss; the approved lease bounds setup.
+              const installed = record(await protocol.request("install-finish", {}, signal));
+              requireThat(
+                installed.revision === manifest.revision,
+                "Remote installation revision mismatch",
+              );
             }
             if (hello.skills_version !== 1) {
               requireThat(
@@ -314,7 +334,7 @@ export class EnvironmentManager {
                   data: bytes.subarray(offset, offset + 65536).toString("base64"),
                 });
               }
-              await protocol.request("skills-finish", {}, 120000);
+              await protocol.request("skills-finish", {}, signal);
             };
             entry.status.detail = "Synchronizing skills from the hub";
             delete entry.status.progress;
@@ -327,7 +347,7 @@ export class EnvironmentManager {
               await protocol.request(
                 "start",
                 { public_base_url: `${this.broker.config.origin}/hub/environments/${alias}` },
-                120000,
+                signal,
               ),
             );
             requireThat(
@@ -359,7 +379,7 @@ export class EnvironmentManager {
             await closed;
             return;
           } catch (error) {
-            if (!upgrading || attempt === 9 || signal.aborted) throw error;
+            if (!upgrading || signal.aborted) throw error;
           } finally {
             if (skillTimer) clearInterval(skillTimer);
             if (heartbeat) clearInterval(heartbeat);
@@ -367,8 +387,10 @@ export class EnvironmentManager {
             stop();
             if (!upgrading || signal.aborted) this.lock(entry);
           }
+          // A legacy supervisor may still be restarting. Probe readiness until the
+          // existing lease ends; a slow service restart is not an installation failure.
+          await NodeTimersPromises.setTimeout(100, undefined, { signal });
         }
-        throw new HubError("Remote supervisor update did not become ready");
       },
     );
   }

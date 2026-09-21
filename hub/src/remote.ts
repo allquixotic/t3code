@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
 // oxlint-disable-next-line t3code/namespace-node-imports -- Node's ESM once export needs a named import in the standalone emitter.
 import { once } from "node:events";
 import { frame } from "./agent-proxy.ts";
@@ -14,6 +15,7 @@ import { Protocol } from "./protocol.ts";
 import { verifyLease, type Lease } from "./lease.ts";
 import { fields, record, text, integer, requireThat, id, run, HubError, digest } from "./io.ts";
 import type { Artifact } from "./types.ts";
+import { connectWhenReady } from "./readiness.ts";
 
 export interface RemoteConfig {
   alias: string;
@@ -725,13 +727,27 @@ export async function remoteConnect(socketPath: string) {
       ),
     ),
   );
-  const socket = NodeNet.createConnection(socketPath);
-
-  process.stdin.pipe(socket);
-  socket.pipe(process.stdout);
-  process.stdin.once("end", () => socket.end());
-  socket.once("close", () => process.stdin.destroy());
-  await once(socket, "close");
+  const abort = new AbortController();
+  const stop = () => abort.abort();
+  // Buffer the initial hello while the OS starts its service, and observe SSH EOF
+  // even before a socket exists. The broker closes this transport on revoke/expiry.
+  const input = new NodeStream.PassThrough();
+  process.stdin.once("end", stop);
+  process.stdin.once("close", stop);
+  process.stdin.pipe(input);
+  try {
+    const socket = await connectWhenReady(socketPath, abort.signal);
+    input.pipe(socket);
+    socket.pipe(process.stdout);
+    await once(socket, "close");
+  } finally {
+    stop();
+    process.stdin.removeListener("end", stop);
+    process.stdin.removeListener("close", stop);
+    process.stdin.unpipe(input);
+    input.destroy();
+    process.stdin.destroy();
+  }
 }
 
 /** The first enrolled executable is only a selector; new sessions use the approved revision. */
