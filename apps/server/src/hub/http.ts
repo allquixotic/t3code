@@ -44,9 +44,9 @@ function brokerRequest(
     request.end();
   });
 }
-export const hubEnvironmentRoutes = HttpRouter.add(
+export const hubRoutes = HttpRouter.add(
   "*",
-  "/api/hub/environments/*",
+  "/api/hub/*",
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -63,15 +63,26 @@ export const hubEnvironmentRoutes = HttpRouter.add(
     );
     const scope = request.method === "GET" ? AuthOrchestrationReadScope : AuthAccessWriteScope;
     if (!session.scopes.includes(scope)) return yield* failEnvironmentScopeRequired(scope);
-    const url = new URL(request.url, "http://hub"),
-      suffix = url.pathname.slice("/api/hub/environments".length).replace(/\/$/, "");
-    if (
-      !/^\/(?:[A-Za-z0-9_.-]+(?:\/(connect|disconnect))?)?$/.test(suffix || "/") ||
-      !["GET", "POST"].includes(request.method)
-    )
-      return HttpServerResponse.empty({ status: 404 });
+    const url = new URL(request.url, "http://hub");
+    let path: string;
+    if (url.pathname === "/api/hub/approvals" && request.method === "GET") {
+      path = "/v1/approvals";
+    } else {
+      if (
+        url.pathname !== "/api/hub/environments" &&
+        !url.pathname.startsWith("/api/hub/environments/")
+      )
+        return HttpServerResponse.empty({ status: 404 });
+      const suffix = url.pathname.slice("/api/hub/environments".length).replace(/\/$/, "");
+      if (
+        !/^\/(?:[A-Za-z0-9_.-]+(?:\/(connect|disconnect))?)?$/.test(suffix || "/") ||
+        !["GET", "POST"].includes(request.method)
+      )
+        return HttpServerResponse.empty({ status: 404 });
+      path = `/v1/environments${suffix}`;
+    }
     const result = yield* Effect.tryPromise({
-      try: (signal) => brokerRequest(request.method, `/v1/environments${suffix}`, signal),
+      try: (signal) => brokerRequest(request.method, path, signal),
       catch: () => new HubTransportError(),
     }).pipe(
       Effect.orElseSucceed(() => ({ status: 503, body: '{"error":"Hub broker unavailable"}' })),

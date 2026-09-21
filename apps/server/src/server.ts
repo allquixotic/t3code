@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import { attachHubGateway } from "../../../hub/src/gateway.ts";
-import { hubEnvironmentRoutes } from "./hub/http.ts";
+import { hubRoutes } from "./hub/http.ts";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -585,7 +585,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
-    hubEnvironmentRoutes,
+    hubRoutes,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

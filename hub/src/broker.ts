@@ -136,6 +136,18 @@ export class Broker {
         .sort((a, b) => b.created_at.localeCompare(a.created_at)),
     };
   }
+  pendingApprovals(uid: number) {
+    // Keep an in-progress passkey ceremony in the feed until access is actually granted.
+    return this.list(uid)
+      .requests.filter((grant) => ["pending", "authenticating", "verifying"].includes(grant.state))
+      .map(({ id, purpose, capabilities, approval_url, request_expires_at }) => ({
+        id,
+        purpose,
+        capabilities,
+        approval_url,
+        request_expires_at,
+      }));
+  }
   async begin(
     requestId: string,
     browser: string,

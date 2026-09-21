@@ -173,6 +173,10 @@ export function workerHandler(broker: Broker, bao: Bao, environments?: Environme
         );
         return;
       }
+      if (request.method === "GET" && path === "/v1/approvals") {
+        json(response, 200, broker.pendingApprovals(uid));
+        return;
+      }
       if (request.method === "GET" && path === "/v1/diagnostics") {
         let signer = "locked",
           unlocker = "unavailable",

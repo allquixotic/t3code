@@ -3,21 +3,11 @@ import * as Schema from "effect/Schema";
 import { HubEnvironmentStatus } from "@t3tools/contracts";
 import { connectPairing } from "~/connection/onboarding";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { resolvePrimaryEnvironmentHttpUrl } from "~/environments/primary";
-import { readDesktopPrimaryBearerToken } from "~/environments/primary/desktopAuth";
+import { requestHub } from "~/hubApi";
 import { Button } from "../ui/button";
 import { SettingsSection } from "./settingsLayout";
 
-async function request(path: string, method = "GET") {
-  const bearer = await readDesktopPrimaryBearerToken();
-  const response = await fetch(resolvePrimaryEnvironmentHttpUrl(`/api/hub/environments/${path}`), {
-    method,
-    credentials: bearer ? "omit" : "include",
-    headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
-  });
-  if (!response.ok) throw new Error("Hub connection service unavailable");
-  return response.json() as Promise<unknown>;
-}
+const request = (path: string, method = "GET") => requestHub(`environments/${path}`, method);
 let snapshot: {
   environments: ReadonlyArray<HubEnvironmentStatus>;
   error: string | null;

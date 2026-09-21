@@ -10,6 +10,40 @@ async function approve(broker: Broker, id: string, ttl = 60) {
   return broker.finish(id, "browser", "verified-passkey", signal());
 }
 
+test("approval notifications expose only pending metadata, without granting or extending access", async () => {
+  const { broker, advance, preparations } = fixture();
+  const ssh = broker.create(1000, "Publish fork", ["ssh:remote"], 60);
+  const remote = broker.create(1000, "Connect environment", ["environment:remote"], 60);
+  assert.throws(() => broker.pendingApprovals(1001), /denied/);
+  assert.deepEqual(
+    new Set(broker.pendingApprovals(1000).map((row) => row.id)),
+    new Set([ssh.id, remote.id]),
+  );
+  assert.deepEqual(Object.keys(broker.pendingApprovals(1000)[0]!).sort(), [
+    "approval_url",
+    "capabilities",
+    "id",
+    "purpose",
+    "request_expires_at",
+  ]);
+  await broker.begin(ssh.id, "browser", 60, signal());
+  assert.equal(broker.pendingApprovals(1000).length, 2);
+  assert.equal(preparations(), 0);
+  await broker.finish(ssh.id, "browser", "verified-passkey", signal());
+  assert.deepEqual(
+    broker.pendingApprovals(1000).map((row) => row.id),
+    [remote.id],
+  );
+  broker.revoke(1000, remote.id);
+  assert.deepEqual(broker.pendingApprovals(1000), []);
+  const expiring = broker.create(1000, "Unanswered request", ["ssh:remote"], 60);
+  advance(600_000);
+  assert.deepEqual(broker.pendingApprovals(1000), []);
+  assert.equal(broker.status(1000, expiring.id).state, "expired");
+  assert.equal(broker.status(1000, expiring.id).request_expires_at, expiring.request_expires_at);
+  broker.close();
+});
+
 test("approval is bound to browser, immutable scope and human-selected duration", async () => {
   const { broker } = fixture();
   const grant = broker.create(1000, "Connect remote", ["environment:remote"], 60);

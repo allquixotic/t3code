@@ -39,6 +39,10 @@ const steps: [string, string, string[]][] = [
       "packages/client-runtime/src/authorization/remote.test.ts",
       "packages/client-runtime/src/connection/resolver.test.ts",
       "apps/server/src/auth/dpop.test.ts",
+      "apps/server/src/hub/http.test.ts",
+      "apps/web/src/components/HubApprovalNotificationCoordinator.test.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.test.tsx",
+      "apps/web/src/components/ThreadNotificationCoordinator.badge.test.tsx",
     ],
   ],
 ];

@@ -239,9 +239,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-notifications",
-    title: "Thread notifications",
+    title: "Notifications",
     to: "/settings/general",
-    searchTerms: ["notification sound alert completion input approval desktop"],
+    searchTerms: [
+      "notification sound alert completion input approval desktop hub passkey remote access",
+    ],
   },
   {
     id: "in-app-notifications",
