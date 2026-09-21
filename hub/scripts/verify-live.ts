@@ -1,4 +1,5 @@
 import http from "node:http";
+import type { Socket } from "node:net";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -6,6 +7,7 @@ import { attachHubGateway } from "../src/gateway.ts";
 import { call } from "../src/io.ts";
 import { hubOnly } from "./maintain.ts";
 import type { EnvironmentStatus } from "../src/types.ts";
+import { shellQuote } from "../src/ssh.ts";
 
 hubOnly();
 const [action, alias, mode = "revoke"] = process.argv.slice(2);
@@ -49,6 +51,34 @@ if (action === "request") {
     throw new Error(
       "Choose a 1-minute approval for the bounded expiry test; this script never shortens or extends grants",
     );
+  let pairingCode = status.pairing_code;
+  const sshGrant = process.env.T3_HUB_VERIFY_SSH_GRANT;
+  if (sshGrant) {
+    if (!/^[a-f0-9]{64}$/.test(sshGrant) || !/^[a-f0-9]{40}$/.test(status.revision ?? ""))
+      throw new Error("Supply a scoped SSH grant and an installed native revision");
+    const grant = (await call("GET", `http://hub/v1/requests/${sshGrant}`, undefined, {
+      socketPath,
+    })) as { state: string; grant_expires_at?: string; capabilities: string[] };
+    if (
+      grant.state !== "active" ||
+      Date.parse(grant.grant_expires_at ?? "") <= Date.now() ||
+      !grant.capabilities.includes(`ssh:${alias}`)
+    )
+      throw new Error("Diagnostic SSH grant is not active for this host");
+    // The browser may have consumed the startup code. Issue this test its own one-time code
+    // through the normal T3 CLI, while both SSH and the environment lease are authorized.
+    const command = `cd ${shellQuote(expectedHome)} && test "$(hostname)" = ${shellQuote(expectedHostname)} && test "$(id -un)" = ${shellQuote(expectedUser)} && test "$(pwd)" = ${shellQuote(expectedHome)} && /var/lib/t3-hub/releases/${status.revision}/t3 pair --base-dir /var/lib/t3-hub/state --ttl 1m --label 'Hub native verification'`;
+    const result = (await call(
+      "POST",
+      "http://hub/v1/ssh/exec",
+      { grant: sshGrant, host: alias, command, timeout_seconds: 20 },
+      { socketPath, signal: AbortSignal.timeout(25000) },
+    )) as { exit_code: number; stdout: string; truncated: boolean; interrupted: boolean };
+    const found = /(?:^|\n)Token:\s*([^\s]+)\s*(?:\n|$)/.exec(result.stdout);
+    if (result.exit_code !== 0 || result.truncated || result.interrupted || !found)
+      throw new Error("Separate diagnostic pairing failed; credential-bearing output withheld");
+    pairingCode = found[1]!;
+  }
   const gateway = attachHubGateway(
     http.createServer((_req, res) => {
       res.writeHead(404);
@@ -56,6 +86,11 @@ if (action === "request") {
     }),
     socketPath,
   );
+  const connections = new Set<Socket>();
+  gateway.on("connection", (connection) => {
+    connections.add(connection);
+    connection.once("close", () => connections.delete(connection));
+  });
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   const address = gateway.address();
@@ -69,7 +104,7 @@ if (action === "request") {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-        subject_token: status.pairing_code,
+        subject_token: pairingCode,
         subject_token_type: "urn:t3:params:oauth:token-type:environment-bootstrap",
         requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
         client_label: "Hub enrollment verification",
@@ -207,11 +242,16 @@ if (action === "request") {
     console.log(
       `PASS: native terminal ran on ${alias}; ${mode} closed its existing websocket and rejected new access (HTTP 423).`,
     );
+  } catch (error) {
+    // Report the diagnostic's own errors before cleanup; never log credential-bearing responses.
+    console.error(error instanceof Error ? error.message : "Native verification failed");
+    throw error;
   } finally {
     // Do not deliberately close a newer connection if this test was interrupted.
     const current = await api("GET", "").catch(() => undefined);
     if (current?.expires_at === status.expires_at) await api("POST", "/disconnect").catch(() => {});
     ws?.close();
+    for (const connection of connections) connection.destroy();
     gateway.closeAllConnections();
     await new Promise<void>((resolve) => gateway.close(() => resolve()));
   }

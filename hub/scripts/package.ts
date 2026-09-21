@@ -11,6 +11,7 @@ import {
   readdirSync,
   statSync,
   chmodSync,
+  existsSync,
 } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -137,6 +138,17 @@ try {
     const stage = join(extracted, entries[0]!);
     const binary = target.startsWith("win-") ? "t3.exe" : "t3";
     if (!statSync(join(stage, binary)).isFile()) throw new Error("Upstream runtime missing");
+    if (!target.startsWith("win-")) {
+      // Upstream repairs this lazily as the runtime user, which cannot chmod our protected tree.
+      const helpers = [
+        join(stage, "node_modules/node-pty/build/Release/spawn-helper"),
+        join(stage, "node_modules/node-pty/build/Debug/spawn-helper"),
+        join(stage, `node_modules/node-pty/prebuilds/${target}/spawn-helper`),
+      ].filter(existsSync);
+      if (target.startsWith("darwin-") && helpers.length === 0)
+        throw new Error("macOS node-pty spawn helper missing from verified upstream archive");
+      for (const helper of helpers) chmodSync(helper, 0o755);
+    }
     build("node", ["apps/server/scripts/cli.ts", "build-exe", "--target", target, "--verbose"]);
     const built = join(
       root,
