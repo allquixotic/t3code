@@ -22,6 +22,8 @@ Repository: `/home/sean/workspaces/operations/t3code-hub`. Upstream: `https://gi
 
 ## Remote delivery
 
+Preserve automatic skill delivery: the hub engine publishes personal Codex/Claude bundles, the broker transfers signed snapshots before startup and while the timed lease is active, and the remote installs them as its runtime user. Keep remote-only skills and pre-replacement backups; never copy credentials, machine-global instructions or plugin runtimes. Older supervisors must update and reconnect within the same deadline before skills transfer. Maintenance skills remain restricted to t3code even when their files are available remotely. Test native provider discovery with isolated homes, not live credentials.
+
 The application owns delivery. After an explicit Connect and timed passkey approval, the broker verifies the selected host/account/directory, opens its scoped SSH transport, signs the fixed lease and approved manifest, compares the remote revision, uploads verified bytes if needed, and starts native T3 there. No agent-issued `--grant` wrapper belongs in normal file or shell operations. No remote source checkout, package install, or compiler is allowed.
 
 Do not preemptively update the fleet. Existing enrollment is reused; first enrollment is an administrator setup action with pinned hub public key, trusted supervisor, OS service, runtime identity, and recovery path. Do not silently treat plain upstream SSH remotes as broker-managed. Every configured managed environment must reject access while locked and require its own timed approval after expiry. Polling, reconnects, deployment, and browser reloads must never create or extend a grant.

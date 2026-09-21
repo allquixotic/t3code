@@ -26,6 +26,7 @@ import { sshHelperCommand } from "./cli/sshHelper.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { hubAgentCommand } from "./cli/hubAgent.ts";
+import { hubSkillsCommand } from "./cli/hubSkills.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -74,6 +75,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       themeCommand,
       triageCommand,
       hubAgentCommand,
+      hubSkillsCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

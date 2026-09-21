@@ -77,8 +77,11 @@ beforeEach(async () => {
   calls.length = 0;
   worker = NodeHttp.createServer((request, response) => {
     calls.push(`${request.method} ${request.url}`);
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url === "/v1/approvals" ? [approval] : []));
+    request.resume();
+    request.once("end", () => {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(request.url === "/v1/approvals" ? [approval] : []));
+    });
   });
   const socket = NodePath.join(directory, "worker.sock");
   await new Promise<void>((resolve, reject) => {
@@ -86,6 +89,7 @@ beforeEach(async () => {
     worker.listen(socket, resolve);
   });
   vi.stubEnv("T3_HUB_BROKER_SOCKET", socket);
+  vi.stubEnv("HOME", directory);
   app = makeApp();
 });
 afterEach(async () => {
@@ -153,4 +157,14 @@ it("is inert on unmanaged servers and reports an unavailable broker", async () =
   vi.stubEnv("T3_HUB_BROKER_SOCKET", NodePath.join(directory, "missing.sock"));
   expect((await request("/api/hub/approvals")).status).toBe(503);
   expect(calls).toEqual([]);
+});
+
+it("publishes current skills before an authenticated connection request, never for a listing", async () => {
+  const skill = NodePath.join(directory, ".codex/skills/fixture");
+  await NodeFSP.mkdir(skill, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(skill, "SKILL.md"), "fixture");
+  expect((await request("/api/hub/environments/mbp/connect", "", "POST")).status).toBe(401);
+  expect(calls).toEqual([]);
+  expect((await request("/api/hub/environments/mbp/connect", credential, "POST")).status).toBe(200);
+  expect(calls).toEqual(["PUT /v1/skills", "POST /v1/environments/mbp/connect"]);
 });

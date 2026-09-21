@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { request as nodeRequest } from "node:http";
+import * as NodeHttp from "node:http";
 import { AuthAccessWriteScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { publishSkills } from "../../../../hub/src/skills-publisher.ts";
 class HubTransportError extends Schema.TaggedError<HubTransportError>()("HubTransportError", {}) {}
 import {
   HttpRouter,
@@ -28,7 +29,7 @@ function brokerRequest(
       resolve({ status: 200, body: "[]" });
       return;
     }
-    const request = nodeRequest(
+    const request = NodeHttp.request(
       { socketPath, method, path, signal, timeout: 10000 },
       (response) => {
         let body = "";
@@ -82,7 +83,15 @@ export const hubRoutes = HttpRouter.add(
       path = `/v1/environments${suffix}`;
     }
     const result = yield* Effect.tryPromise({
-      try: (signal) => brokerRequest(request.method, path, signal),
+      try: async (signal) => {
+        if (
+          request.method === "POST" &&
+          path.endsWith("/connect") &&
+          process.env.T3_HUB_BROKER_SOCKET
+        )
+          await publishSkills(process.env.T3_HUB_BROKER_SOCKET, signal);
+        return brokerRequest(request.method, path, signal);
+      },
       catch: () => new HubTransportError(),
     }).pipe(
       Effect.orElseSucceed(() => ({ status: 503, body: '{"error":"Hub broker unavailable"}' })),

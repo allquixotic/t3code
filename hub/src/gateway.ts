@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - protected Node I/O adapter, also runs outside the Effect host.
-import http from "node:http";
-import type { Socket } from "node:net";
-import type { Duplex } from "node:stream";
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
+import * as NodeStream from "node:stream";
 import { peerUid } from "./peercred.ts";
 import { requireThat } from "./io.ts";
 import type { EnvironmentManager } from "./environments.ts";
+import { startSkillsPublisher } from "./skills-publisher.ts";
 
-export function attachWorkerTunnels(server: http.Server, environments: EnvironmentManager) {
+export function attachWorkerTunnels(server: NodeHttp.Server, environments: EnvironmentManager) {
   server.on("connect", (request, socket, head) => {
     void (async () => {
       requireThat(
@@ -29,9 +30,9 @@ export function attachWorkerTunnels(server: http.Server, environments: Environme
     });
   });
 }
-function tunnel(socketPath: string, alias: string): Promise<Socket> {
+function tunnel(socketPath: string, alias: string): Promise<NodeNet.Socket> {
   return new Promise((resolve, reject) => {
-    const request = http.request({
+    const request = NodeHttp.request({
       socketPath,
       method: "CONNECT",
       path: `/v1/environments/${alias}/tunnel`,
@@ -62,8 +63,8 @@ async function proxy(
   socketPath: string,
   alias: string,
   path: string,
-  request: http.IncomingMessage,
-  response: http.ServerResponse | Duplex,
+  request: NodeHttp.IncomingMessage,
+  response: NodeHttp.ServerResponse | NodeStream.Duplex,
   head?: Buffer,
 ) {
   const socket = await tunnel(socketPath, alias);
@@ -74,9 +75,9 @@ async function proxy(
     headers.connection = "Upgrade";
     headers.upgrade = "websocket";
   } else delete headers.upgrade;
-  const agent = new http.Agent({ keepAlive: false });
+  const agent = new NodeHttp.Agent({ keepAlive: false });
   agent.createConnection = () => socket;
-  const outgoing = http.request({ method: request.method, path, headers, agent });
+  const outgoing = NodeHttp.request({ method: request.method, path, headers, agent });
   const stop = () => {
     socket.destroy();
     outgoing.destroy();
@@ -84,7 +85,7 @@ async function proxy(
   };
   response.on("close", stop);
   outgoing.on("error", () => {
-    if (response instanceof http.ServerResponse && !response.headersSent) {
+    if (response instanceof NodeHttp.ServerResponse && !response.headersSent) {
       response.writeHead(423, { "content-type": "application/json", "cache-control": "no-store" });
       response.end('{"error":"Environment locked or disconnected"}');
     } else response.destroy();
@@ -109,7 +110,7 @@ async function proxy(
     outgoing.end();
   } else {
     outgoing.on("response", (remote) => {
-      const target = response as http.ServerResponse;
+      const target = response as NodeHttp.ServerResponse;
       const safeHeaders = { ...remote.headers };
       delete safeHeaders["set-cookie"];
       target.writeHead(remote.statusCode ?? 502, safeHeaders);
@@ -119,19 +120,28 @@ async function proxy(
   }
 }
 /** Intercept only the broker-managed prefix; normal T3 requests retain their original listeners. */
-export function attachHubGateway(server: http.Server, socketPath: string | undefined): http.Server {
+export function attachHubGateway(
+  server: NodeHttp.Server,
+  socketPath: string | undefined,
+): NodeHttp.Server {
   if (!socketPath) return server;
+  const stopSkillsPublisher = startSkillsPublisher(socketPath);
+  server.once("close", stopSkillsPublisher);
   // Node only promotes HTTP upgrades when an upgrade listener is registered.
   server.on("upgrade", (_request, socket) => {
     if (server.listenerCount("upgrade") === 1) socket.destroy();
   });
   const emit = server.emit;
-  server.emit = function (this: http.Server, event: string | symbol, ...args: unknown[]): boolean {
+  server.emit = function (
+    this: NodeHttp.Server,
+    event: string | symbol,
+    ...args: unknown[]
+  ): boolean {
     if (event === "request" || event === "upgrade") {
-      const request = args[0] as http.IncomingMessage;
+      const request = args[0] as NodeHttp.IncomingMessage;
       const match = /^\/hub\/environments\/([A-Za-z0-9_.-]+)(\/[^\r\n]*)$/.exec(request.url ?? "");
       if (match) {
-        const response = args[1] as http.ServerResponse | Duplex;
+        const response = args[1] as NodeHttp.ServerResponse | NodeStream.Duplex;
         void proxy(
           socketPath,
           match[1]!,
@@ -140,7 +150,7 @@ export function attachHubGateway(server: http.Server, socketPath: string | undef
           response,
           event === "upgrade" ? (args[2] as Buffer) : undefined,
         ).catch(() => {
-          if (response instanceof http.ServerResponse && !response.headersSent) {
+          if (response instanceof NodeHttp.ServerResponse && !response.headersSent) {
             response.writeHead(423, {
               "content-type": "application/json",
               "cache-control": "no-store",

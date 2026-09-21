@@ -1,29 +1,18 @@
+/* oxlint-disable t3code/no-global-process-runtime -- Standalone protected OS supervisor, outside the Effect host. */
 import { extractTar } from "./archive.ts";
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - protected Node I/O adapter, also runs outside the Effect host.
-import net from "node:net";
-import os from "node:os";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
-  rmSync,
-  existsSync,
-  chmodSync,
-  openSync,
-  closeSync,
-  writeSync,
-  lstatSync,
-} from "node:fs";
-import { join, isAbsolute } from "node:path";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+// oxlint-disable-next-line t3code/namespace-node-imports -- Node's ESM once export needs a named import in the standalone emitter.
 import { once } from "node:events";
 import { frame } from "./agent-proxy.ts";
 import { Protocol } from "./protocol.ts";
 import { verifyLease, type Lease } from "./lease.ts";
-import { fields, record, text, integer, requireThat, id, run, HubError } from "./io.ts";
+import { fields, record, text, integer, requireThat, id, run, HubError, digest } from "./io.ts";
 import type { Artifact } from "./types.ts";
 
 export interface RemoteConfig {
@@ -60,7 +49,7 @@ export function parseRemoteConfig(value: unknown): RemoteConfig {
     "Invalid remote identity",
   );
   for (const key of ["root_directory", "base_directory", "runtime_home"])
-    requireThat(isAbsolute(text(c[key])), "Absolute remote policy paths required");
+    requireThat(NodePath.isAbsolute(text(c[key])), "Absolute remote policy paths required");
   requireThat(
     text(c.public_key).includes("BEGIN PUBLIC KEY") && text(c.socket).length > 0,
     "Remote trust key and socket required",
@@ -77,12 +66,16 @@ export function parseRemoteConfig(value: unknown): RemoteConfig {
 }
 export class RemoteSession {
   readonly nonce = id();
-  readonly channels = new Map<number, net.Socket>();
+  readonly channels = new Map<number, NodeNet.Socket>();
   readonly abort = new AbortController();
   private lease?: Lease;
   private heartbeat?: NodeJS.Timeout;
   private deadline?: NodeJS.Timeout;
-  private child?: ChildProcess;
+  private child?: NodeChildProcess.ChildProcess;
+  private skillsChild?: NodeChildProcess.ChildProcess;
+  private skillsUnit?: string;
+  private skillsUpload?: { sha256: string; size: number; chunks: Buffer[]; received: number };
+  private skillsRevision?: string;
   private port?: number;
   private unit?: string;
   private closed = false;
@@ -95,7 +88,7 @@ export class RemoteSession {
     fd: number;
     artifact: Artifact;
     bytes: number;
-    hash: ReturnType<typeof createHash>;
+    hash: ReturnType<typeof NodeCrypto.createHash>;
   };
   readonly config: RemoteConfig;
   readonly protocol: Protocol;
@@ -165,8 +158,11 @@ export class RemoteSession {
   private revision() {
     try {
       return text(
-        record(JSON.parse(readFileSync(join(this.config.root_directory, "current.json"), "utf8")))
-          .revision,
+        record(
+          JSON.parse(
+            NodeFS.readFileSync(NodePath.join(this.config.root_directory, "current.json"), "utf8"),
+          ),
+        ).revision,
       );
     } catch {
       return null;
@@ -179,6 +175,9 @@ export class RemoteSession {
       "install-chunk",
       "install-finish",
       "start",
+      "skills-begin",
+      "skills-chunk",
+      "skills-finish",
     ].includes(type);
     if (transition) {
       requireThat(!this.transitioning, "Remote lifecycle operation in progress");
@@ -196,9 +195,10 @@ export class RemoteSession {
         protocol: 1,
         nonce: this.nonce,
         platform: `${process.platform === "win32" ? "win" : process.platform}-${process.arch}`,
-        hostname: os.hostname(),
+        hostname: NodeOS.hostname(),
         ssh_user: this.config.ssh_user,
         revision: this.revision(),
+        skills_version: 1,
       };
     if (type === "lease") {
       requireThat(!this.lease && !this.closed, "Lease is immutable");
@@ -224,6 +224,108 @@ export class RemoteSession {
       this.touch();
       return { active: true, expires_at: lease.expires_at };
     }
+    if (type === "skills-begin") {
+      requireThat(!this.skillsUpload && !this.skillsChild, "Skill transfer in progress");
+      const approval = verifyLease(payload, this.config.public_key, this.config.alias, this.nonce);
+      requireThat(
+        approval.request_id === lease.request_id &&
+          approval.expires_at === lease.expires_at &&
+          approval.manifest.revision === lease.manifest.revision &&
+          approval.skills &&
+          this.revision() === lease.manifest.revision,
+        "Skill transfer outside current lease",
+      );
+      if (this.skillsRevision === approval.skills.sha256) return { unchanged: true };
+      this.skillsUpload = {
+        sha256: approval.skills.sha256,
+        size: approval.skills.bytes,
+        chunks: [],
+        received: 0,
+      };
+      return { unchanged: false };
+    }
+    if (type === "skills-chunk") {
+      const upload = this.skillsUpload,
+        bytes = Buffer.from(text(record(payload).data), "base64");
+      requireThat(
+        upload &&
+          bytes.length > 0 &&
+          bytes.length <= 65536 &&
+          upload.received + bytes.length <= upload.size,
+        "Invalid skill chunk",
+      );
+      upload.chunks.push(bytes);
+      upload.received += bytes.length;
+      return { received: upload.received };
+    }
+    if (type === "skills-finish") {
+      const upload = this.skillsUpload;
+      requireThat(upload && upload.received === upload.size, "Incomplete skill transfer");
+      const bytes = Buffer.concat(upload.chunks);
+      requireThat(digest(bytes) === upload.sha256, "Skill checksum mismatch");
+      const binary = NodePath.join(
+        this.config.root_directory,
+        lease.manifest.revision,
+        process.platform === "win32" ? "t3.exe" : "t3",
+      );
+      const env = {
+        HOME: this.config.runtime_home,
+        USERPROFILE: this.config.runtime_home,
+        PATH: this.config.runtime_path ?? process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+      };
+      // Drop to the runtime user. Linux needs a separate unit to leave the supervisor's read-only home mount.
+      if (process.platform === "linux")
+        this.skillsUnit = `t3-hub-skills-${lease.request_id.slice(0, 32)}`;
+      if (process.platform === "win32")
+        requireThat(
+          NodeOS.userInfo().username.toLowerCase() === this.config.runtime_user.toLowerCase(),
+          "Windows supervisor must use the enrolled runtime identity",
+        );
+      const child =
+        process.platform === "linux"
+          ? NodeChildProcess.spawn(
+              "/usr/bin/systemd-run",
+              [
+                "--quiet",
+                "--pipe",
+                "--wait",
+                "--collect",
+                `--unit=${this.skillsUnit}`,
+                "--service-type=exec",
+                `--property=User=${this.config.runtime_user}`,
+                `--property=WorkingDirectory=${this.config.runtime_home}`,
+                "--property=KillMode=control-group",
+                "--property=TimeoutStopSec=3",
+                `--property=RuntimeMaxSec=${Math.max(1, Math.floor((lease.expires_at - Date.now()) / 1000))}`,
+                `--setenv=HOME=${this.config.runtime_home}`,
+                binary,
+                "__hub-skills",
+              ],
+              { env, detached: true, stdio: ["pipe", "ignore", "ignore"] },
+            )
+          : NodeChildProcess.spawn(binary, ["__hub-skills"], {
+              env,
+              cwd: this.config.runtime_home,
+              detached: true,
+              ...(process.platform === "win32"
+                ? {}
+                : { uid: this.config.runtime_uid, gid: this.config.runtime_gid }),
+              stdio: ["pipe", "ignore", "ignore"],
+            });
+      this.skillsChild = child;
+      child.stdin!.on("error", () => {});
+      const completed = once(child, "exit", { signal: this.abort.signal });
+      child.stdin!.end(bytes);
+      const [code] = await completed;
+      this.authorized();
+      requireThat(code === 0, "Remote skills could not be installed");
+      this.skillsRevision = upload.sha256;
+      delete this.skillsUpload;
+      delete this.skillsChild;
+      delete this.skillsUnit;
+      return { revision: this.skillsRevision };
+    }
     if (type === "install-begin") {
       requireThat(!this.child && !this.upload, "Runtime update already in progress");
       const artifact = record(record(payload).artifact);
@@ -238,16 +340,16 @@ export class RemoteSession {
         ),
         "Artifact outside signed lease",
       );
-      mkdirSync(this.config.root_directory, { recursive: true, mode: 0o755 });
-      const directory = mkdtempSync(join(this.config.root_directory, ".incoming-")),
-        file = join(directory, "runtime.tar");
+      NodeFS.mkdirSync(this.config.root_directory, { recursive: true, mode: 0o755 });
+      const directory = NodeFS.mkdtempSync(NodePath.join(this.config.root_directory, ".incoming-")),
+        file = NodePath.join(directory, "runtime.tar");
       this.upload = {
         directory,
         file,
-        fd: openSync(file, "wx", 0o600),
+        fd: NodeFS.openSync(file, "wx", 0o600),
         artifact: approved,
         bytes: 0,
-        hash: createHash("sha256"),
+        hash: NodeCrypto.createHash("sha256"),
       };
       return { ready: true };
     }
@@ -262,7 +364,7 @@ export class RemoteSession {
         "Invalid artifact chunk",
       );
       let offset = 0;
-      while (offset < bytes.length) offset += writeSync(upload.fd, bytes, offset);
+      while (offset < bytes.length) offset += NodeFS.writeSync(upload.fd, bytes, offset);
       upload.hash.update(bytes);
       upload.bytes += bytes.length;
       return { received: upload.bytes };
@@ -275,16 +377,16 @@ export class RemoteSession {
           upload.hash.digest("hex") === upload.artifact.sha256,
         "Artifact checksum mismatch",
       );
-      closeSync(upload.fd);
+      NodeFS.closeSync(upload.fd);
       upload.fd = -1;
-      const directory = join(upload.directory, "runtime");
-      mkdirSync(directory, { mode: 0o755 });
-      chmodSync(directory, 0o755);
+      const directory = NodePath.join(upload.directory, "runtime");
+      NodeFS.mkdirSync(directory, { mode: 0o755 });
+      NodeFS.chmodSync(directory, 0o755);
       await extractTar(upload.file, directory, this.abort.signal);
       this.authorized();
-      const binary = join(directory, process.platform === "win32" ? "t3.exe" : "t3");
+      const binary = NodePath.join(directory, process.platform === "win32" ? "t3.exe" : "t3");
       requireThat(
-        lstatSync(binary).isFile() && !lstatSync(binary).isSymbolicLink(),
+        NodeFS.lstatSync(binary).isFile() && !NodeFS.lstatSync(binary).isSymbolicLink(),
         "Patched runtime missing",
       );
       if (process.platform === "darwin") {
@@ -300,18 +402,18 @@ export class RemoteSession {
         version.exit_code === 0 && version.stdout.includes(lease.manifest.baseline.slice(1)),
         "Runtime version mismatch",
       );
-      const destination = join(this.config.root_directory, lease.manifest.revision);
+      const destination = NodePath.join(this.config.root_directory, lease.manifest.revision);
       this.authorized();
-      if (!existsSync(destination)) renameSync(directory, destination);
-      const next = join(this.config.root_directory, `.current-${id()}.json`);
-      writeFileSync(
+      if (!NodeFS.existsSync(destination)) NodeFS.renameSync(directory, destination);
+      const next = NodePath.join(this.config.root_directory, `.current-${id()}.json`);
+      NodeFS.writeFileSync(
         next,
         JSON.stringify({ revision: lease.manifest.revision, baseline: lease.manifest.baseline }),
         { mode: 0o644, flag: "wx" },
       );
       this.authorized();
-      renameSync(next, join(this.config.root_directory, "current.json"));
-      rmSync(upload.directory, { recursive: true });
+      NodeFS.renameSync(next, NodePath.join(this.config.root_directory, "current.json"));
+      NodeFS.rmSync(upload.directory, { recursive: true });
       delete this.upload;
       return { revision: lease.manifest.revision };
     }
@@ -333,7 +435,7 @@ export class RemoteSession {
       const port = await freePort();
       this.authorized();
       this.port = port;
-      const binary = join(
+      const binary = NodePath.join(
         this.config.root_directory,
         lease.manifest.revision,
         process.platform === "win32" ? "t3.exe" : "t3",
@@ -365,7 +467,7 @@ export class RemoteSession {
       };
       if (process.platform === "linux") {
         this.unit = `t3-hub-${lease.request_id.slice(0, 32)}`;
-        this.child = spawn(
+        this.child = NodeChildProcess.spawn(
           "/usr/bin/systemd-run",
           [
             "--quiet",
@@ -390,10 +492,10 @@ export class RemoteSession {
       } else {
         if (process.platform === "win32")
           requireThat(
-            os.userInfo().username.toLowerCase() === this.config.runtime_user.toLowerCase(),
+            NodeOS.userInfo().username.toLowerCase() === this.config.runtime_user.toLowerCase(),
             "Windows supervisor must use the enrolled runtime identity",
           );
-        this.child = spawn(binary, args, {
+        this.child = NodeChildProcess.spawn(binary, args, {
           env,
           cwd: this.config.runtime_home,
           detached: true,
@@ -454,7 +556,7 @@ export class RemoteSession {
       requireThat(this.child && this.port && this.channels.size < 128, "Runtime unavailable");
       const channel = integer(record(payload).channel);
       requireThat(channel > 0 && !this.channels.has(channel), "Invalid channel");
-      const socket = net.createConnection({ host: "127.0.0.1", port: this.port });
+      const socket = NodeNet.createConnection({ host: "127.0.0.1", port: this.port });
       this.channels.set(channel, socket);
       socket.on("data", (bytes) => {
         socket.pause();
@@ -501,6 +603,25 @@ export class RemoteSession {
       await run("/usr/bin/systemctl", ["stop", this.unit], AbortSignal.timeout(10000)).catch(
         () => {},
       );
+    if (this.skillsUnit)
+      await run("/usr/bin/systemctl", ["stop", this.skillsUnit], AbortSignal.timeout(10000)).catch(
+        () => {},
+      );
+    if (this.skillsChild?.pid) {
+      if (process.platform === "win32")
+        await run(
+          "C:\\Windows\\System32\\taskkill.exe",
+          ["/PID", String(this.skillsChild.pid), "/T", "/F"],
+          AbortSignal.timeout(10000),
+        ).catch(() => {});
+      else
+        try {
+          process.kill(-this.skillsChild.pid, "SIGKILL");
+        } catch {
+          /* already exited */
+        }
+    }
+    delete this.skillsUpload;
     if (this.child?.pid) {
       if (process.platform === "win32")
         await run(
@@ -516,15 +637,15 @@ export class RemoteSession {
         }
     }
     if (this.upload) {
-      if (this.upload.fd >= 0) closeSync(this.upload.fd);
-      rmSync(this.upload.directory, { recursive: true, force: true });
+      if (this.upload.fd >= 0) NodeFS.closeSync(this.upload.fd);
+      NodeFS.rmSync(this.upload.directory, { recursive: true, force: true });
       delete this.upload;
     }
     this.release();
   }
 }
 async function freePort() {
-  const server = net.createServer();
+  const server = NodeNet.createServer();
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
@@ -537,8 +658,11 @@ async function freePort() {
 export function remoteServer(config: RemoteConfig) {
   const installedRevision = () => {
     try {
-      return record(JSON.parse(readFileSync(join(config.root_directory, "current.json"), "utf8")))
-        .revision;
+      return record(
+        JSON.parse(
+          NodeFS.readFileSync(NodePath.join(config.root_directory, "current.json"), "utf8"),
+        ),
+      ).revision;
     } catch {
       return null;
     }
@@ -546,7 +670,7 @@ export function remoteServer(config: RemoteConfig) {
   const initialRevision = installedRevision();
   let active: RemoteSession | undefined;
   const sessions = new Set<RemoteSession>();
-  const server = net.createServer((socket) => {
+  const server = NodeNet.createServer((socket) => {
     if (sessions.size >= 32) {
       socket.destroy();
       return;
@@ -576,7 +700,7 @@ export function remoteServer(config: RemoteConfig) {
     });
   });
   server.listen(config.socket, () => {
-    if (process.platform !== "win32") chmodSync(config.socket, 0o660);
+    if (process.platform !== "win32") NodeFS.chmodSync(config.socket, 0o660);
   });
   return {
     server,
@@ -592,12 +716,16 @@ export async function remoteConnect(socketPath: string) {
       Buffer.from(
         JSON.stringify({
           type: "identity",
-          payload: { user: os.userInfo().username, hostname: os.hostname(), cwd: process.cwd() },
+          payload: {
+            user: NodeOS.userInfo().username,
+            hostname: NodeOS.hostname(),
+            cwd: process.cwd(),
+          },
         }),
       ),
     ),
   );
-  const socket = net.createConnection(socketPath);
+  const socket = NodeNet.createConnection(socketPath);
 
   process.stdin.pipe(socket);
   socket.pipe(process.stdout);
@@ -611,8 +739,11 @@ export async function superviseRemote(config: RemoteConfig, configPath: string) 
   let revision = "bootstrap";
   try {
     revision = text(
-      record(JSON.parse(readFileSync(join(config.root_directory, "current.json"), "utf8")))
-        .revision,
+      record(
+        JSON.parse(
+          NodeFS.readFileSync(NodePath.join(config.root_directory, "current.json"), "utf8"),
+        ),
+      ).revision,
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -621,12 +752,12 @@ export async function superviseRemote(config: RemoteConfig, configPath: string) 
     revision === "bootstrap" || /^[a-f0-9]{40}$/.test(revision),
     "Invalid installed supervisor revision",
   );
-  const binary = join(
+  const binary = NodePath.join(
     config.root_directory,
     revision,
     process.platform === "win32" ? "t3.exe" : "t3",
   );
-  const child = spawn(binary, ["__hub-agent", "serve", "--config", configPath], {
+  const child = NodeChildProcess.spawn(binary, ["__hub-agent", "serve", "--config", configPath], {
     stdio: "inherit",
   });
   const stop = () => child.kill("SIGTERM");

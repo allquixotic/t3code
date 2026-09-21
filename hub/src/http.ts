@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - protected Node I/O adapter, also runs outside the Effect host.
-import http from "node:http";
-import { readFileSync, chmodSync } from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodeFS from "node:fs";
 import { Broker } from "./broker.ts";
 import { Bao, providerRequest } from "./credentials.ts";
 import { peerUid } from "./peercred.ts";
@@ -18,7 +18,9 @@ import {
   jsonBody,
   message,
   requestBytes,
+  collect,
 } from "./io.ts";
+import { SKILLS_LIMIT } from "./skills.ts";
 import type { EnvironmentManager } from "./environments.ts";
 
 const COOKIE = "__Host-hub-approval";
@@ -37,19 +39,19 @@ const securityHeaders = {
 };
 export function webHandler(broker: Broker) {
   const browsers = new Map<string, Browser>();
-  const cookieValue = (request: http.IncomingMessage) =>
+  const cookieValue = (request: NodeHttp.IncomingMessage) =>
     request.headers.cookie
       ?.split(/;\s*/)
       .find((v) => v.startsWith(COOKIE + "="))
       ?.slice(COOKIE.length + 1);
-  const cookie = (response: http.ServerResponse, value: string, seconds: number) =>
+  const cookie = (response: NodeHttp.ServerResponse, value: string, seconds: number) =>
     response.setHeader(
       "set-cookie",
       `${COOKIE}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${seconds}`,
     );
   const browser = (
-    request: http.IncomingMessage,
-    response: http.ServerResponse,
+    request: NodeHttp.IncomingMessage,
+    response: NodeHttp.ServerResponse,
     create = false,
   ): [string, Browser] => {
     const value = cookieValue(request);
@@ -68,7 +70,7 @@ export function webHandler(broker: Broker) {
     cookie(response, token, 7200);
     return [key, session];
   };
-  return async (request: http.IncomingMessage, response: http.ServerResponse) => {
+  return async (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
     for (const [key, value] of Object.entries(securityHeaders)) response.setHeader(key, value);
     try {
       const path = new URL(request.url!, broker.config.origin).pathname;
@@ -90,7 +92,7 @@ export function webHandler(broker: Broker) {
           "content-type",
           asset[1]!.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8",
         );
-        response.end(readFileSync(new URL(`../web/${asset[1]}`, import.meta.url)));
+        response.end(NodeFS.readFileSync(new URL(`../web/${asset[1]}`, import.meta.url)));
         return;
       }
       const page = /^\/access\/requests\/([a-f0-9]{64})$/.exec(path);
@@ -98,7 +100,7 @@ export function webHandler(broker: Broker) {
         broker.status(-1, page[1]!);
         browser(request, response, true);
         response.setHeader("content-type", "text/html; charset=utf-8");
-        response.end(readFileSync(new URL("../web/index.html", import.meta.url)));
+        response.end(NodeFS.readFileSync(new URL("../web/index.html", import.meta.url)));
         return;
       }
       const api = /^\/access\/api\/requests\/([a-f0-9]{64})(?:\/(begin|finish|revoke))?$/.exec(
@@ -141,7 +143,10 @@ export function webHandler(broker: Broker) {
     }
   };
 }
-export function connectionSignal(request: http.IncomingMessage, response: http.ServerResponse) {
+export function connectionSignal(
+  request: NodeHttp.IncomingMessage,
+  response: NodeHttp.ServerResponse,
+) {
   const controller = new AbortController();
   request.once("aborted", () => controller.abort());
   response.once("close", () => {
@@ -150,13 +155,18 @@ export function connectionSignal(request: http.IncomingMessage, response: http.S
   return controller.signal;
 }
 export function workerHandler(broker: Broker, bao: Bao, environments?: EnvironmentManager) {
-  return async (request: http.IncomingMessage, response: http.ServerResponse) => {
+  return async (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
     try {
       const uid = peerUid(request.socket);
       requireThat(uid === broker.config.worker_uid && !request.headers.origin, "Worker denied");
       const url = new URL(request.url!, "http://hub-worker"),
         path = url.pathname,
         signal = connectionSignal(request, response);
+      if (environments && request.method === "PUT" && path === "/v1/skills") {
+        const revision = environments.publishSkills(await collect(request, SKILLS_LIMIT));
+        json(response, 200, { revision });
+        return;
+      }
       if (request.method === "GET" && path === "/v1/catalog") {
         json(response, 200, broker.catalog());
         return;
@@ -340,11 +350,11 @@ export function workerHandler(broker: Broker, bao: Bao, environments?: Environme
     }
   };
 }
-export async function listenUnix(server: http.Server, path: string) {
+export async function listenUnix(server: NodeHttp.Server, path: string) {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(path, () => {
-      chmodSync(path, 0o660);
+      NodeFS.chmodSync(path, 0o660);
       resolve();
     });
   });
