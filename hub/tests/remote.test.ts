@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   chmodSync,
+  statSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -135,6 +136,7 @@ test("interrupted or corrupt updates never replace the installed revision", asyn
 });
 test("verified artifact installs atomically with the exact signed revision", async () => {
   const f = fixture();
+  const mask = process.umask(0o027);
   try {
     const binary = join(f.directory, "t3");
     writeFileSync(binary, "#!/bin/sh\nprintf '0.0.42\\n'\n");
@@ -155,11 +157,16 @@ test("verified artifact installs atomically with the exact signed revision", asy
       JSON.parse(readFileSync(join(f.config.root_directory, "current.json"), "utf8")).revision,
       f.lease.manifest.revision,
     );
+    assert.equal(
+      statSync(join(f.config.root_directory, f.lease.manifest.revision)).mode & 0o777,
+      0o755,
+    );
     assert.deepEqual(
       readdirSync(f.config.root_directory).sort(),
       [f.lease.manifest.revision, "current.json"].sort(),
     );
   } finally {
+    process.umask(mask);
     await f.cleanup();
   }
 });

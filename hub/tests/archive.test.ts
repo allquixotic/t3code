@@ -75,6 +75,19 @@ test("extracts gzip and PAX long names", async () => {
     f.cleanup();
   }
 });
+test("code directories stay readable after privilege dropping under a restrictive service umask", async () => {
+  const f = fixture(entry("nested/bin/run", "hello", "0", "", 0o755));
+  const mask = process.umask(0o027);
+  try {
+    await f.run();
+    assert.equal(statSync(join(f.destination, "nested")).mode & 0o777, 0o755);
+    assert.equal(statSync(join(f.destination, "nested/bin")).mode & 0o777, 0o755);
+    assert.equal(statSync(join(f.destination, "nested/bin/run")).mode & 0o777, 0o755);
+  } finally {
+    process.umask(mask);
+    f.cleanup();
+  }
+});
 test("rejects traversal, absolute, drive and alternate-stream paths", async () => {
   for (const path of [
     "../escape",

@@ -101,6 +101,8 @@ export async function extractTar(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       mkdirSync(path, { mode: 0o755 });
+      // The service's restrictive umask must not hide code from its dropped-privilege runtime.
+      chmodSync(path, 0o755);
     }
   }
   try {

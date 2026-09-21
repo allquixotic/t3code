@@ -279,6 +279,7 @@ export class RemoteSession {
       upload.fd = -1;
       const directory = join(upload.directory, "runtime");
       mkdirSync(directory, { mode: 0o755 });
+      chmodSync(directory, 0o755);
       await extractTar(upload.file, directory, this.abort.signal);
       this.authorized();
       const binary = join(directory, process.platform === "win32" ? "t3.exe" : "t3");
